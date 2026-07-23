@@ -15,6 +15,7 @@
  */
 
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -54,13 +55,17 @@ private:
     bool active = false;
 };
 
-sycl::device get_device_for_rank(int rank) {
+sycl::device get_device_for_rank(int local_rank, int local_size) {
     auto devices = sycl::device::get_devices(sycl::info::device_type::gpu);
-    if (devices.empty()) {
-        std::cerr << "No GPU devices found!" << std::endl;
+    if (devices.size() < static_cast<std::size_t>(local_size)) {
+        if (local_rank == 0) {
+            std::cerr << "Grouped NCCL test requires " << local_size
+                      << " visible GPU devices for the local MPI ranks, found " << devices.size()
+                      << std::endl;
+        }
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
-    return devices[rank % devices.size()];
+    return devices[local_rank];
 }
 
 int main(int argc, char* argv[]) {
@@ -93,10 +98,12 @@ int main(int argc, char* argv[]) {
     MPI_Comm local_comm;
     MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &local_comm);
     int local_rank = 0;
+    int local_size = 0;
     MPI_Comm_rank(local_comm, &local_rank);
+    MPI_Comm_size(local_comm, &local_size);
     MPI_Comm_free(&local_comm);
 
-    sycl::device dev = get_device_for_rank(local_rank);
+    sycl::device dev = get_device_for_rank(local_rank, local_size);
     sycl::context ctx(dev);
     sycl::queue q(ctx, dev, sycl::property::queue::in_order());
 
