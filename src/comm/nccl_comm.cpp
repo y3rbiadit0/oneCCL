@@ -26,7 +26,6 @@
 #include <atomic>
 #include <memory>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -198,29 +197,6 @@ void nccl_comm::group_end() {
     auto streams = std::move(group_context.streams);
 
     ncclResult_t status = ncclGroupEnd();
-#if CCL_NCCL_NONBLOCKING_SUPPORTED
-    if (status == ncclInProgress) {
-        for (auto* comm : communicators) {
-            ncclResult_t async_status = ncclInProgress;
-            while (async_status == ncclInProgress) {
-                status = ncclCommGetAsyncError(comm->nccl_comm_handle, &async_status);
-                if (status != ncclSuccess) {
-                    break;
-                }
-                if (async_status == ncclInProgress) {
-                    std::this_thread::yield();
-                }
-            }
-            if (status != ncclSuccess) {
-                break;
-            }
-            status = async_status;
-            if (status != ncclSuccess) {
-                break;
-            }
-        }
-    }
-#endif
 
     group_context.active = false;
     group_context.communicators.clear();
