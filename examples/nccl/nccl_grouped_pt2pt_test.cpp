@@ -16,6 +16,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <exception>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -141,25 +142,61 @@ int main(int argc, char* argv[]) {
     q.memset(d_recv_right, 0, count * sizeof(float)).wait();
 
     ccl_group_scope outer_group;
-    ccl_group_scope inner_group;
     auto recv_left =
         ccl::recv(d_recv_left, count, ccl::datatype::float32, left, comm, stream);
+
+    ccl_group_scope inner_group;
     auto recv_right =
         ccl::recv(d_recv_right, count, ccl::datatype::float32, right, comm, stream);
     auto send_right =
         ccl::send(d_send_right, count, ccl::datatype::float32, right, comm, stream);
-    auto send_left =
-        ccl::send(d_send_left, count, ccl::datatype::float32, left, comm, stream);
-    if (recv_left.test()) {
-        std::cerr << "Rank " << rank << ": grouped event completed before group_end" << std::endl;
+    if (recv_left.test() || recv_right.test() || send_right.test()) {
+        std::cerr << "Rank " << rank << ": grouped event completed inside nested group"
+                  << std::endl;
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
+
     inner_group.end();
-    if (recv_left.test()) {
+    if (recv_left.test() || recv_right.test() || send_right.test()) {
         std::cerr << "Rank " << rank << ": grouped event completed at nested group_end"
                   << std::endl;
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
+
+    auto send_left =
+        ccl::send(d_send_left, count, ccl::datatype::float32, left, comm, stream);
+    if (send_left.test()) {
+        std::cerr << "Rank " << rank << ": outer grouped event completed before group_end"
+                  << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+
+    bool wait_threw = false;
+    try {
+        recv_left.wait();
+    }
+    catch (const std::exception&) {
+        wait_threw = true;
+    }
+    if (!wait_threw) {
+        std::cerr << "Rank " << rank << ": grouped event wait succeeded before group_end"
+                  << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+
+    bool get_native_threw = false;
+    try {
+        (void)recv_left.get_native();
+    }
+    catch (const std::exception&) {
+        get_native_threw = true;
+    }
+    if (!get_native_threw) {
+        std::cerr << "Rank " << rank
+                  << ": grouped event native handle was available before group_end" << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+
     outer_group.end();
 
     recv_left.get_native().wait();
@@ -167,6 +204,18 @@ int main(int argc, char* argv[]) {
     recv_right.wait();
     send_right.wait();
     send_left.wait();
+
+    bool unmatched_end_threw = false;
+    try {
+        ccl::group_end();
+    }
+    catch (const std::exception&) {
+        unmatched_end_threw = true;
+    }
+    if (!unmatched_end_threw) {
+        std::cerr << "Rank " << rank << ": group_end without group_start succeeded" << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
 
     q.memcpy(recv_left_data.data(), d_recv_left, count * sizeof(float)).wait();
     q.memcpy(recv_right_data.data(), d_recv_right, count * sizeof(float)).wait();
