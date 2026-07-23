@@ -18,6 +18,26 @@
 #include "common/global/global.hpp"
 #include "comm/comm.hpp"
 
+#ifdef CCL_ENABLE_NCCL
+#include "comm/nccl_comm.hpp"
+#endif
+
+namespace {
+
+struct group_lifecycle_state {
+    std::size_t depth{};
+    ::backend_mode backend{ ::backend_mode::native };
+};
+
+thread_local group_lifecycle_state lifecycle;
+
+void reset_group_lifecycle() noexcept {
+    lifecycle = group_lifecycle_state{};
+    group_impl::is_group_active = false;
+}
+
+} // namespace
+
 thread_local bool group_impl::is_group_active = false;
 thread_local bool group_impl::first_group_op = false;
 thread_local std::vector<std::pair<ccl_coll_type, std::function<ccl::event()>>>
@@ -34,6 +54,27 @@ thread_local std::vector<std::shared_ptr<ccl_internal_comm::group_recv_request>>
 std::mutex group_impl::group_mutex;
 
 void group_impl::start() {
+    if (lifecycle.depth > 0) {
+        ++lifecycle.depth;
+        return;
+    }
+
+#ifdef CCL_ENABLE_NCCL
+    if (ccl::global_data::env().backend == ::backend_mode::nccl) {
+        ccl::nccl_comm::group_start();
+        lifecycle.backend = ::backend_mode::nccl;
+        lifecycle.depth = 1;
+        is_group_active = true;
+        return;
+    }
+#endif
+
+    start_native();
+    lifecycle.backend = ::backend_mode::native;
+    lifecycle.depth = 1;
+}
+
+void group_impl::start_native() {
     LOG_DEBUG("group operation is started");
     operation_storage.clear();
 #ifdef CCL_ENABLE_SYCL
@@ -58,6 +99,32 @@ void group_impl::start() {
 }
 
 void group_impl::end() {
+    CCL_THROW_IF_NOT(lifecycle.depth > 0, "group_end called without group_start");
+
+    if (lifecycle.depth > 1) {
+        --lifecycle.depth;
+        return;
+    }
+
+#ifdef CCL_ENABLE_NCCL
+    if (lifecycle.backend == ::backend_mode::nccl) {
+        try {
+            ccl::nccl_comm::group_end();
+        }
+        catch (...) {
+            reset_group_lifecycle();
+            throw;
+        }
+        reset_group_lifecycle();
+        return;
+    }
+#endif
+
+    end_native();
+    lifecycle = group_lifecycle_state{};
+}
+
+void group_impl::end_native() {
     bool is_multi_thread_instance = true;
     if (ccl::global_data::get().shared_data) {
         auto& g = *ccl::global_data::get().shared_data;

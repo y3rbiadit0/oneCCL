@@ -67,6 +67,10 @@ public:
 
     ccl::event make_event(const ccl::stream::impl_value_t& stream);
 
+    static void group_start();
+    static void group_end();
+    static bool is_group_active();
+
     // collective operation declarations
     ccl::event barrier(const ccl::stream::impl_value_t& stream,
                        const ccl::barrier_attr& attr,
@@ -87,6 +91,10 @@ public:
     }
 
 private:
+    void register_group_operation(const ccl::stream::impl_value_t& stream);
+    static ccl::event make_group_event(const ccl::stream::impl_value_t& stream);
+    ccl::event make_operation_event(const ccl::stream::impl_value_t& stream);
+
     nccl_comm* get_impl() {
         return this;
     }

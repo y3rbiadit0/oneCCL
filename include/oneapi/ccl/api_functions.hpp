@@ -472,13 +472,15 @@ communicator CCL_API split_communicator(const communicator& comm, int color, int
  * \brief group_start() starts a group call. You can use the group_start() function 
  * to initiate a group call operation which indicates that 
  * successive operations should not get blocked due to CPU synchronization.
+ * Group calls may be nested; operations are submitted by the outermost group_end().
  */
 void CCL_API group_start();
 /**
  * \ingroup group_calls
  * \brief group_end() ends a group call. The group_end() call returns when all the operations 
  * between group_start() and group_end() have been enqueued for execution, 
- * but not necessarily completed.
+ * but not necessarily completed. Events returned by grouped operations must not be waited on
+ * and their native handles must not be accessed before the outermost group_end() returns.
  */
 void CCL_API group_end();
 /** @} */ // end of group_calls

@@ -25,6 +25,7 @@
 #include <iostream>
 #include <set>
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 
 #include "comm/comm.hpp"
@@ -62,5 +63,8 @@ public:
 #endif // CCL_ENABLE_SYCL
 
 private:
+    static void start_native();
+    static void end_native();
+
     static std::mutex group_mutex;
 };
