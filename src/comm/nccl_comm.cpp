@@ -180,8 +180,7 @@ void nccl_comm::group_start() {
     group_context.streams.clear();
 
     ncclResult_t status = ncclGroupStart();
-    CCL_THROW_IF_NOT(status == ncclSuccess,
-                     "ncclGroupStart failed: ", ncclGetErrorString(status));
+    CCL_THROW_IF_NOT(status == ncclSuccess, "ncclGroupStart failed: ", ncclGetErrorString(status));
 
     group_context.active = true;
 #endif
@@ -203,14 +202,12 @@ void nccl_comm::group_end() {
     group_context.streams.clear();
 
     if (status != ncclSuccess) {
-        const std::string error =
-            std::string("ncclGroupEnd failed: ") + ncclGetErrorString(status);
+        const std::string error = std::string("ncclGroupEnd failed: ") + ncclGetErrorString(status);
         for (auto* comm : communicators) {
             if (comm->nccl_comm_handle != nullptr) {
                 const ncclResult_t abort_status = ncclCommAbort(comm->nccl_comm_handle);
                 if (abort_status != ncclSuccess) {
-                    LOG_WARN("NCCL COMM: ncclCommAbort failed: ",
-                             ncclGetErrorString(abort_status));
+                    LOG_WARN("NCCL COMM: ncclCommAbort failed: ", ncclGetErrorString(abort_status));
                 }
                 comm->nccl_comm_handle = nullptr;
             }
@@ -262,9 +259,10 @@ void nccl_comm::register_group_operation(const ccl::stream::impl_value_t& stream
     }
 
 #if defined(CCL_ENABLE_SYCL)
-    const auto existing =
-        std::find_if(group_context.streams.begin(), group_context.streams.end(),
-                     [&](const auto& item) { return item.stream.get() == stream.get(); });
+    const auto existing = std::find_if(
+        group_context.streams.begin(), group_context.streams.end(), [&](const auto& item) {
+            return item.stream.get() == stream.get();
+        });
     if (existing == group_context.streams.end()) {
         group_context.streams.push_back({ stream, {} });
     }
@@ -276,9 +274,10 @@ void nccl_comm::register_group_operation(const ccl::stream::impl_value_t& stream
 ccl::event nccl_comm::make_group_event(const ccl::stream::impl_value_t& stream) {
     CCL_THROW_IF_NOT(group_context.active, "NCCL group event created outside a group");
 #if defined(CCL_ENABLE_SYCL)
-    const auto item =
-        std::find_if(group_context.streams.begin(), group_context.streams.end(),
-                     [&](const auto& value) { return value.stream.get() == stream.get(); });
+    const auto item = std::find_if(
+        group_context.streams.begin(), group_context.streams.end(), [&](const auto& value) {
+            return value.stream.get() == stream.get();
+        });
     CCL_THROW_IF_NOT(item != group_context.streams.end(),
                      "NCCL group event stream was not registered");
 
@@ -518,8 +517,8 @@ ccl::event nccl_comm::alltoall_impl(const void* send_buf,
     ncclResult_t status = ncclSuccess;
     if (!outer_group) {
         status = ncclGroupStart();
-        CCL_THROW_IF_NOT(status == ncclSuccess,
-                         "ncclGroupStart failed: ", ncclGetErrorString(status));
+        CCL_THROW_IF_NOT(
+            status == ncclSuccess, "ncclGroupStart failed: ", ncclGetErrorString(status));
     }
 
     ncclResult_t first_error = ncclSuccess;

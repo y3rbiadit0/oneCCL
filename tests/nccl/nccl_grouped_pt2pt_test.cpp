@@ -149,14 +149,11 @@ int main(int argc, char* argv[]) {
     q.memset(d_recv_right, 0, count * sizeof(float)).wait();
 
     ccl_group_scope outer_group;
-    auto recv_left =
-        ccl::recv(d_recv_left, count, ccl::datatype::float32, left, comm, stream);
+    auto recv_left = ccl::recv(d_recv_left, count, ccl::datatype::float32, left, comm, stream);
 
     ccl_group_scope inner_group;
-    auto recv_right =
-        ccl::recv(d_recv_right, count, ccl::datatype::float32, right, comm, stream);
-    auto send_right =
-        ccl::send(d_send_right, count, ccl::datatype::float32, right, comm, stream);
+    auto recv_right = ccl::recv(d_recv_right, count, ccl::datatype::float32, right, comm, stream);
+    auto send_right = ccl::send(d_send_right, count, ccl::datatype::float32, right, comm, stream);
     if (recv_left.test() || recv_right.test() || send_right.test()) {
         std::cerr << "Rank " << rank << ": grouped event completed inside nested group"
                   << std::endl;
@@ -170,8 +167,7 @@ int main(int argc, char* argv[]) {
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
-    auto send_left =
-        ccl::send(d_send_left, count, ccl::datatype::float32, left, comm, stream);
+    auto send_left = ccl::send(d_send_left, count, ccl::datatype::float32, left, comm, stream);
     if (send_left.test()) {
         std::cerr << "Rank " << rank << ": outer grouped event completed before group_end"
                   << std::endl;
