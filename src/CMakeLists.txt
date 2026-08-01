@@ -442,9 +442,7 @@ message(STATUS "SRC LINK_LIBS: ${SRC_LINK_LIBS}")
 install(TARGETS ccl LIBRARY DESTINATION ${CCL_INSTALL_LIB})
 install(FILES
     "${PROJECT_SOURCE_DIR}/cmake/FindIntelSYCL.cmake"
-    "${PROJECT_SOURCE_DIR}/cmake/FindIntelSYCL_cuda.cmake"
     "${PROJECT_SOURCE_DIR}/cmake/FindIntelSYCL_level_zero.cmake"
-    "${PROJECT_SOURCE_DIR}/cmake/FindNVSHMEM.cmake"
     "${PROJECT_SOURCE_DIR}/cmake/FindNUMA.cmake"
     "${PROJECT_SOURCE_DIR}/cmake/FindSYCL.cmake"
     DESTINATION ${CCL_INSTALL_LIB})

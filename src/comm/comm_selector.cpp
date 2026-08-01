@@ -147,8 +147,6 @@ comm_interface_ptr comm_selector::create_comm_impl(const size_t size,
     }
 #endif // CCL_ENABLE_NVSHMEM
 
-    CCL_THROW_IF_NOT(ccl::global_data::env().backend == backend_mode::native,
-                     "device communicator backend is not supported");
     return comm_interface_ptr(
         ccl_comm::create(device, context, size, rank, std::move(kvs), internal_attr));
 }
@@ -224,8 +222,6 @@ comm_interface_ptr comm_selector::create_comm_implExt(const size_t size,
     }
 #endif // CCL_ENABLE_NVSHMEM
 
-    CCL_THROW_IF_NOT(ccl::global_data::env().backend == backend_mode::native,
-                     "device communicator backend is not supported");
     return comm_interface_ptr(ccl_comm::createExt(device, context, size, rank, kvs, internal_attr));
 }
 } // namespace ccl
