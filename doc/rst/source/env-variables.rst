@@ -2,6 +2,18 @@
 Environment Variables
 =====================
 
+Backend Selection
+#################
+
+CCL_BACKEND
+===========
+
+Selects the process-wide communicator backend. The default value is ``native``.
+An NVSHMEM-enabled build also accepts ``nvshmem`` for CUDA-backed SYCL device
+communicators. Host communicators continue to use the native implementation.
+The experimental M1 NVSHMEM backend supports communicator construction only;
+collective operations and group calls report an explicit unsupported error.
+
 .. _collective-algorithms-selection:
 
 Collective Algorithms Selection
@@ -2598,5 +2610,4 @@ available, the memory the application requires, and the message size of the
 collectives used. With larger values, oneCCL consumes more memory but can
 provide higher performance. Similarly, small values will reduce memory
 utilization, but can degrade performance.
-
 

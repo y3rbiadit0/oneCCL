@@ -257,7 +257,7 @@ function(activate_compute_backend MODULES_PATH COMPUTE_BACKEND)
 
         # Choose the appropriate SYCL backend based on configuration
         # If RCCL is enabled (AMD GPU target), use HIP backend
-        # If NCCL is enabled (NVIDIA GPU target), use CUDA backend
+        # If NCCL or NVSHMEM is enabled (NVIDIA GPU target), use CUDA backend
         # Otherwise, use Level Zero backend (Intel GPU target)
         if(CCL_ENABLE_RCCL)
             message(STATUS "RCCL enabled - using SYCL with HIP/AMD backend")
@@ -278,8 +278,8 @@ function(activate_compute_backend MODULES_PATH COMPUTE_BACKEND)
             set (COMPUTE_BACKEND_TARGET_NAME Intel::SYCL_hip)
             set (COMPUTE_BACKEND_TARGET_NAME Intel::SYCL_hip PARENT_SCOPE)
             message (STATUS "COMPUTE_BACKEND_TARGET_NAME: ${COMPUTE_BACKEND_TARGET_NAME} requested. Using DPC++ with HIP provider")
-        elseif(CCL_ENABLE_NCCL)
-            message(STATUS "NCCL enabled - using SYCL with CUDA/NVIDIA backend")
+        elseif(CCL_ENABLE_NCCL OR CCL_ENABLE_NVSHMEM)
+            message(STATUS "NVIDIA collective backend enabled - using SYCL with CUDA backend")
             SET (COMPUTE_BACKEND_LOAD_MODULE "IntelSYCL_cuda"
                     CACHE STRING
                  "COMPUTE_BACKEND=${COMPUTE_BACKEND} requested. Using DPC++ with CUDA backend" FORCE)
@@ -474,6 +474,10 @@ function(set_compute_backend COMMON_CMAKE_DIR)
             message(WARNING "RCCL requested but library not found. Some features may be unavailable.")
             set(CCL_RCCL_FOUND FALSE PARENT_SCOPE)
         endif()
+    endif()
+
+    if (CCL_ENABLE_NVSHMEM)
+        add_definitions(-DCCL_ENABLE_NVSHMEM)
     endif()
 
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMPUTE_BACKEND_FLAGS}")

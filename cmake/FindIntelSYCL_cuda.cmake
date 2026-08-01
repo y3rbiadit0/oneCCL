@@ -179,7 +179,7 @@ if(IntelSYCL_cuda_FOUND AND NOT TARGET Intel::SYCL_cuda)
     if(CUDA_FOUND AND CUDA_INCLUDE_DIRS)
         list(APPEND SYCL_CUDA_INCLUDE_DIRS "${CUDA_INCLUDE_DIRS}")
     endif()
-    if(NCCL_FOUND AND NCCL_INCLUDE_DIRS)
+    if(CCL_ENABLE_NCCL AND NCCL_FOUND AND NCCL_INCLUDE_DIRS)
         list(APPEND SYCL_CUDA_INCLUDE_DIRS "${NCCL_INCLUDE_DIRS}")
     endif()
 
@@ -205,7 +205,7 @@ if(IntelSYCL_cuda_FOUND AND NOT TARGET Intel::SYCL_cuda)
         endif()
     endif()
     
-    if(NCCL_FOUND)
+    if(CCL_ENABLE_NCCL AND NCCL_FOUND)
         list(APPEND imp_libs ${NCCL_LIBRARIES})
     endif()
 
