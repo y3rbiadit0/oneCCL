@@ -847,7 +847,8 @@ event broadcast(void* buf,
                 const broadcast_attr& attr,
                 const vector_class<event>& deps) {
     impl_dispatch disp;
-    if (ccl::global_data::env().use_mpi_bcast_wa) {
+    if (ccl::global_data::env().use_mpi_bcast_wa &&
+        ccl::global_data::env().backend == backend_mode::native) {
         ccl_comm* global_comm = (ccl_comm*)(disp(comm).get());
         return invoke_mpi_bcast(buf, count, dtype, root, global_comm, op_stream, attr, deps);
     }

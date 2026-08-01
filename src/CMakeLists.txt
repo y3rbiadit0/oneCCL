@@ -137,6 +137,12 @@ if (CCL_ENABLE_RCCL)
     )
 endif(CCL_ENABLE_RCCL)
 
+if (CCL_ENABLE_NVSHMEM)
+    list(APPEND EXTENSIONS_SRC
+        comm/nvshmem_comm.cpp
+    )
+endif(CCL_ENABLE_NVSHMEM)
+
 set(CCL_SRC
 
     atl/atl_base_comm.cpp
@@ -436,7 +442,9 @@ message(STATUS "SRC LINK_LIBS: ${SRC_LINK_LIBS}")
 install(TARGETS ccl LIBRARY DESTINATION ${CCL_INSTALL_LIB})
 install(FILES
     "${PROJECT_SOURCE_DIR}/cmake/FindIntelSYCL.cmake"
+    "${PROJECT_SOURCE_DIR}/cmake/FindIntelSYCL_cuda.cmake"
     "${PROJECT_SOURCE_DIR}/cmake/FindIntelSYCL_level_zero.cmake"
+    "${PROJECT_SOURCE_DIR}/cmake/FindNVSHMEM.cmake"
     "${PROJECT_SOURCE_DIR}/cmake/FindNUMA.cmake"
     "${PROJECT_SOURCE_DIR}/cmake/FindSYCL.cmake"
     DESTINATION ${CCL_INSTALL_LIB})

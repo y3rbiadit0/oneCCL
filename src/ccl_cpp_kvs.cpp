@@ -37,10 +37,26 @@
 #endif // CCL_ENABLE_RCCL
 
 namespace ccl {
+namespace {
+
+bool backend_uses_native_kvs() {
+    const auto backend = ccl::global_data::env().backend;
+    if (backend == backend_mode::native) {
+        return true;
+    }
+#ifdef CCL_ENABLE_NVSHMEM
+    return backend == backend_mode::nvshmem;
+#else
+    return false;
+#endif
+}
+
+} // namespace
+
 base_kvs_impl::base_kvs_impl(const kvs::address_type& addr) : addr(addr) {}
 
 native_kvs_impl::native_kvs_impl(const kvs_attr& attr) : base_kvs_impl() {
-    CCL_THROW_IF_NOT(ccl::global_data::env().backend == backend_mode::native,
+    CCL_THROW_IF_NOT(backend_uses_native_kvs(),
                      "incorrect non-native backend is used");
 
     inter_kvs.reset(new internal_kvs());
@@ -55,7 +71,7 @@ native_kvs_impl::native_kvs_impl(const kvs_attr& attr) : base_kvs_impl() {
 
 native_kvs_impl::native_kvs_impl(const kvs::address_type& addr, const kvs_attr& attr)
         : base_kvs_impl(addr) {
-    CCL_THROW_IF_NOT(ccl::global_data::env().backend == backend_mode::native,
+    CCL_THROW_IF_NOT(backend_uses_native_kvs(),
                      "incorrect non-native backend is used");
 
     inter_kvs.reset(new internal_kvs());
@@ -68,7 +84,7 @@ native_kvs_impl::native_kvs_impl(const kvs::address_type& addr, const kvs_attr& 
 }
 
 vector_class<char> native_kvs_impl::get(const string_class& key) {
-    CCL_THROW_IF_NOT(ccl::global_data::env().backend == backend_mode::native,
+    CCL_THROW_IF_NOT(backend_uses_native_kvs(),
                      "incorrect non-native backend is used");
 
     std::string ret;
@@ -79,7 +95,7 @@ vector_class<char> native_kvs_impl::get(const string_class& key) {
 }
 
 void native_kvs_impl::set(const string_class& key, const vector_class<char>& data) {
-    CCL_THROW_IF_NOT(ccl::global_data::env().backend == backend_mode::native,
+    CCL_THROW_IF_NOT(backend_uses_native_kvs(),
                      "incorrect non-native backend is used");
 
     CCL_THROW_IF_NOT(!data.empty(), "data should have at least one element");

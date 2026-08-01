@@ -30,12 +30,12 @@
 
 #define ONECCL_SPEC_VERSION "1.0"
 
-#define CCL_MAJOR_VERSION           @CCL_MAJOR_VERSION@
-#define CCL_MINOR_VERSION           @CCL_MINOR_VERSION@
-#define CCL_UPDATE_VERSION          @CCL_UPDATE_VERSION@
-#cmakedefine CCL_PRODUCT_STATUS     "@CCL_PRODUCT_STATUS@"
-#cmakedefine CCL_PRODUCT_BUILD_DATE "@CCL_PRODUCT_BUILD_DATE@"
-#cmakedefine CCL_PRODUCT_FULL       "@CCL_PRODUCT_FULL@"
+#define CCL_MAJOR_VERSION           2021
+#define CCL_MINOR_VERSION           17
+#define CCL_UPDATE_VERSION          2
+#define CCL_PRODUCT_STATUS     "Gold"
+#define CCL_PRODUCT_BUILD_DATE "2026-08-01T 12:29:14Z"
+#define CCL_PRODUCT_FULL       "Gold-2021.17.2 2026-08-01T 12:29:14Z (feat/nvshmem_collectives/d4cb8f8)"
 
 /* Enable SYCL support for:
  * 1. Intel oneAPI DPC++ compiler (__INTEL_LLVM_COMPILER)
@@ -55,15 +55,15 @@
 
 /* NCCL support is configured by CMake (-DCCL_ENABLE_NCCL=ON) */
 #ifndef CCL_ENABLE_NCCL
-#cmakedefine CCL_ENABLE_NCCL
+/* #undef CCL_ENABLE_NCCL */
 #endif
 
 /* RCCL support is configured by CMake (-DCCL_ENABLE_RCCL=ON) */
 #ifndef CCL_ENABLE_RCCL
-#cmakedefine CCL_ENABLE_RCCL
+/* #undef CCL_ENABLE_RCCL */
 #endif
 
 /* NVSHMEM support is configured by CMake (-DCCL_ENABLE_NVSHMEM=ON) */
 #ifndef CCL_ENABLE_NVSHMEM
-#cmakedefine CCL_ENABLE_NVSHMEM
+/* #undef CCL_ENABLE_NVSHMEM */
 #endif

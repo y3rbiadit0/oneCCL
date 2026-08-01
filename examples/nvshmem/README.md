@@ -1,6 +1,8 @@
 # NVSHMEM M0 Interoperability Spike
 
-This standalone executable validates the toolchain assumptions required by the planned oneCCL NVSHMEM backend. It is deliberately not connected to `CCL_BACKEND` or normal oneCCL communicator dispatch.
+The M0 standalone executable validates the toolchain assumptions required by
+the oneCCL NVSHMEM backend. M0 remains independent of normal communicator
+dispatch; the M1 skeleton is selected separately with `CCL_BACKEND=nvshmem`.
 
 The spike verifies this path:
 
@@ -205,3 +207,48 @@ Runtime fails collectively when:
 - Symmetric or SYCL device allocation fails.
 - The NVSHMEM collective or barrier returns an error.
 - The reduction result is incorrect.
+
+## Validated Configuration
+
+M0 completed on Leonardo on 2026-07-31 with DPC++ 21, NVHPC CUDA 12.4,
+NVHPC NVSHMEM 2.11, and HPC-X 2.19. Slurm job 51172113 passed with two PEs
+on one node, and job 51172241 passed with one PE on each of two nodes. Both
+topologies passed element counts 1, 1024, and 1048576.
+
+## M1 Backend Skeleton
+
+M1 adds the optional `CCL_ENABLE_NVSHMEM` build switch, `CCL_BACKEND=nvshmem`
+parsing, CUDA SYCL device/context validation, native KVS reuse, and a retained
+in-order queue. NVSHMEM runtime initialization starts in M2; M1 collectives and
+group calls fail explicitly instead of falling back to native algorithms.
+
+On Leonardo, source the hybrid environment and use the existing oneCCL build
+driver with NVSHMEM enabled and NCCL disabled:
+
+```bash
+source examples/nvshmem/leonardo_env.sh
+
+./build-leonardo-sycl.sh --skip-env \
+  --build-dir "$SCRATCH/oneccl-nvshmem-m1-build" \
+  --install-prefix "$HOME/opt/oneccl-nvshmem-m1" \
+  --no-examples --no-install -- \
+  -DCCL_ENABLE_NCCL=OFF \
+  -DCCL_ENABLE_NVSHMEM=ON \
+  -DENABLE_MPI_TESTS=ON \
+  -DBUILD_FT=ON \
+  -DNVSHMEM_ROOT="$NVSHMEM_HOME"
+```
+
+Run the hardware-gated two-rank smoke test from a one-node Slurm allocation:
+
+```bash
+cmake --build "$SCRATCH/oneccl-nvshmem-m1-build" \
+  --parallel 16 --target ccl nvshmem_m1_comm_test
+ctest --test-dir "$SCRATCH/oneccl-nvshmem-m1-build" \
+  --output-on-failure -R '^nvshmem_m1_comm_test$'
+```
+
+The CTest definition uses the MPI launcher matching `MPI_DIR` and supplies the
+bundled Intel MPI, oneCCL library, Slurm bootstrap, shared-memory fabric, and
+oneCCL MPI transport environment. Do not export those settings globally in
+`leonardo_env.sh`: M0's NVSHMEM bootstrap intentionally uses HPC-X instead.

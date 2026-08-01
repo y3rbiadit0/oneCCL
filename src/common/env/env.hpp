@@ -66,6 +66,9 @@ enum class backend_mode {
 #ifdef CCL_ENABLE_RCCL
     rccl,
 #endif // CCL_ENABLE_RCCL
+#ifdef CCL_ENABLE_NVSHMEM
+    nvshmem,
+#endif // CCL_ENABLE_NVSHMEM
 };
 
 enum class process_launcher_mode {
