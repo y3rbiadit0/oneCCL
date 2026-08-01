@@ -24,6 +24,7 @@ Options:
   --nvshmem-root DIR    Override the NVHPC NVSHMEM installation
   --mpi-cxx FILE        Override the HPC-X MPI C++ wrapper
   --cuda-arch ARCH      CUDA architecture without sm_ prefix (default: 80)
+  --linker FILE         Override the host linker (default: loaded Binutils 2.42)
   -j, --jobs N          Parallel build jobs (default: $SLURM_CPUS_PER_TASK or 16)
   --clean               Remove the M0 build directory before configuring (default)
   --no-clean            Reuse the existing build directory
@@ -55,6 +56,7 @@ dpcpp_root=
 cuda_root=
 nvshmem_root=
 mpi_cxx=
+linker=${NVSHMEM_M0_LINKER:-}
 cuda_arch=${NVSHMEM_M0_CUDA_ARCHITECTURE:-80}
 jobs=${NVSHMEM_M0_JOBS:-${SLURM_CPUS_PER_TASK:-16}}
 load_environment=1
@@ -107,6 +109,11 @@ while [[ $# -gt 0 ]]; do
         --cuda-arch)
             require_value "$@"
             cuda_arch=${2#sm_}
+            shift 2
+            ;;
+        --linker)
+            require_value "$@"
+            linker=$2
             shift 2
             ;;
         -j|--jobs)
@@ -169,6 +176,27 @@ else
     mpi_cxx=${mpi_cxx:-${MPI_CXX_COMPILER:-${MPICXX:-mpicxx}}}
 fi
 
+if [[ -z "$linker" && "$dry_run" == 0 ]]; then
+    linker_candidates=()
+    if [[ -n "${BINUTILS_ROOT:-}" ]]; then
+        linker_candidates+=("$BINUTILS_ROOT/bin/ld")
+    fi
+    linker_candidates+=(
+        /leonardo/prod/spack/*/install/*/linux-rhel8-icelake/gcc-8.5.0/binutils-2.42-*/bin/ld
+    )
+    for candidate in "${linker_candidates[@]}"; do
+        if [[ -x "$candidate" ]]; then
+            linker=$candidate
+            break
+        fi
+    done
+fi
+if [[ "$dry_run" == 0 ]]; then
+    [[ -n "$linker" ]] ||
+        die "Leonardo Binutils 2.42 linker was not found; use --linker"
+    [[ -x "$linker" ]] || die "host linker is not executable: $linker"
+fi
+
 export DPCPP_ROOT="$dpcpp_root"
 export DPCPP_INSTALL="$dpcpp_root"
 export CUDA_HOME="$cuda_root"
@@ -178,6 +206,7 @@ export CUDACXX="$cuda_root/bin/nvcc"
 export NVSHMEM_HOME="$nvshmem_root"
 export NVSHMEM_ROOT="$nvshmem_root"
 export MPI_CXX_COMPILER="$mpi_cxx"
+export NVSHMEM_M0_LINKER="$linker"
 export NVSHMEM_M0_BUILD_DIR="$build_dir"
 export NVSHMEM_M0_CUDA_ARCHITECTURE="$cuda_arch"
 
@@ -199,6 +228,7 @@ printf '%s\n' \
     "NVHPC CUDA root:      $cuda_root" \
     "NVHPC NVSHMEM root:   $nvshmem_root" \
     "HPC-X MPI wrapper:    $mpi_cxx" \
+    "Host linker:          ${linker:-<dry-run auto-detection>}" \
     "Build directory:      $build_dir" \
     "CUDA architecture:    $cuda_arch"
 
@@ -211,6 +241,9 @@ build_args=(
     --cuda-arch "$cuda_arch"
     --jobs "$jobs"
 )
+if [[ -n "$linker" ]]; then
+    build_args+=(--linker "$linker")
+fi
 if [[ "$clean" == 0 ]]; then
     build_args+=(--no-clean)
 fi

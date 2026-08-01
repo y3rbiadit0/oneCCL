@@ -22,6 +22,8 @@ Options:
   --cuda-arch ARCH      CUDA architecture without sm_ prefix (default: 80)
   --cuda-host FILE      NVCC host C++ compiler (default: $NVSHMEM_M0_CUDA_HOST_COMPILER,
                         or $GCC12_ROOT/bin/g++ when available)
+  --linker FILE         Host linker selected by DPC++ (default: $NVSHMEM_M0_LINKER or
+                        the compiler default)
   -j, --jobs N          Parallel build jobs (default: $SLURM_CPUS_PER_TASK or 16)
   --clean               Remove the build directory before configuring (default)
   --no-clean            Reuse the existing build directory
@@ -34,7 +36,8 @@ Environment overrides:
   NVSHMEM_HOME, NVSHMEM_ROOT, NVSHMEM_DIR, MPI_CXX_COMPILER, MPICXX,
   GCC12_ROOT, GCC_HOME,
   NVSHMEM_M0_BUILD_DIR, NVSHMEM_M0_CUDA_ARCHITECTURE,
-  NVSHMEM_M0_CUDA_HOST_COMPILER, NVSHMEM_M0_HOST_FLAGS, NVSHMEM_M0_JOBS
+  NVSHMEM_M0_CUDA_HOST_COMPILER, NVSHMEM_M0_LINKER, NVSHMEM_M0_HOST_FLAGS,
+  NVSHMEM_M0_JOBS
 
 Example:
   ./examples/nvshmem/build_m0.sh --cuda-arch 80
@@ -65,6 +68,7 @@ mpi_cxx=${MPI_CXX_COMPILER:-${MPICXX:-mpicxx}}
 gcc_root=${GCC12_ROOT:-${GCC_HOME:-}}
 cuda_arch=${NVSHMEM_M0_CUDA_ARCHITECTURE:-80}
 cuda_host=${NVSHMEM_M0_CUDA_HOST_COMPILER:-}
+linker=${NVSHMEM_M0_LINKER:-}
 jobs=${NVSHMEM_M0_JOBS:-${SLURM_CPUS_PER_TASK:-16}}
 clean=1
 configure_only=0
@@ -113,6 +117,11 @@ while [[ $# -gt 0 ]]; do
         --cuda-host)
             require_value "$@"
             cuda_host=$2
+            shift 2
+            ;;
+        --linker)
+            require_value "$@"
+            linker=$2
             shift 2
             ;;
         -j|--jobs)
@@ -215,6 +224,10 @@ if [[ "$dry_run" == 0 ]]; then
     if [[ -n "$cuda_host" ]]; then
         [[ -x "$cuda_host" ]] || die "NVCC host compiler is not executable: $cuda_host"
     fi
+    if [[ -n "$linker" ]]; then
+        [[ -x "$linker" ]] || die "host linker is not executable: $linker"
+        linker=$(cd -- "$(dirname -- "$linker")" && pwd -P)/$(basename -- "$linker")
+    fi
 
     printf '%s\n' \
         "M0 source:        $script_dir" \
@@ -222,6 +235,7 @@ if [[ "$dry_run" == 0 ]]; then
         "DPC++ compiler:  $dpcpp_cxx" \
         "NVCC:            $nvcc" \
         "NVCC host:       ${cuda_host:-<NVCC default>}" \
+        "Host linker:     ${linker:-<compiler default>}" \
         "MPI C++ wrapper: $mpi_cxx" \
         "CUDA root:       $cuda_root" \
         "NVSHMEM:         $nvshmem_discovery" \
@@ -233,6 +247,11 @@ fi
 host_flags=${NVSHMEM_M0_HOST_FLAGS:-}
 if [[ -z "$host_flags" && -n "$gcc_root" ]]; then
     host_flags=--gcc-toolchain=$gcc_root
+fi
+compiler_flags=$host_flags
+if [[ -n "$linker" ]]; then
+    linker_dir=$(dirname -- "$linker")
+    compiler_flags="${compiler_flags:+$compiler_flags }-B$linker_dir"
 fi
 
 link_flags=
@@ -255,6 +274,7 @@ cmake_args=(
     "-DMPI_CXX_COMPILER=$mpi_cxx"
     "-DNVSHMEM_ROOT=$nvshmem_root"
     "-DNVSHMEM_M0_CUDA_ARCHITECTURE=$cuda_arch"
+    -DCMAKE_LINK_DEPENDS_USE_LINKER=FALSE
 )
 
 if [[ -n "$nvshmem_dir" && -f "$nvshmem_dir/NVSHMEMConfig.cmake" ]]; then
@@ -264,8 +284,11 @@ fi
 if [[ -n "$cuda_host" ]]; then
     cmake_args+=("-DCMAKE_CUDA_HOST_COMPILER=$cuda_host")
 fi
-if [[ -n "$host_flags" ]]; then
-    cmake_args+=("-DCMAKE_CXX_FLAGS=$host_flags")
+if [[ -n "$compiler_flags" ]]; then
+    cmake_args+=("-DCMAKE_CXX_FLAGS=$compiler_flags")
+fi
+if [[ -n "$linker" ]]; then
+    cmake_args+=("-DCMAKE_LINKER=$linker")
 fi
 if [[ -n "$link_flags" ]]; then
     cmake_args+=("-DCMAKE_EXE_LINKER_FLAGS=$link_flags")

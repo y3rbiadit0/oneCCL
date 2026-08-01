@@ -128,3 +128,25 @@ set_target_properties(oneccl_nvshmem_m0 PROPERTIES
     LINKER_LANGUAGE CXX
     POSITION_INDEPENDENT_CODE ON
 )
+
+add_executable(oneccl_nvshmem_uid_spike
+    nvshmem_uid_spike.cpp
+    nvshmem_uid_adapter.cu
+)
+target_compile_features(oneccl_nvshmem_uid_spike PRIVATE cxx_std_17 cuda_std_17)
+target_include_directories(oneccl_nvshmem_uid_spike PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(oneccl_nvshmem_uid_spike PRIVATE
+    MPI::MPI_CXX
+    ${NVSHMEM_M0_HOST_TARGET}
+    CUDA::cudart
+    CUDA::cuda_driver
+)
+set_target_properties(oneccl_nvshmem_uid_spike PROPERTIES
+    CUDA_ARCHITECTURES "${NVSHMEM_M0_CUDA_ARCHITECTURE}"
+    CUDA_STANDARD 17
+    CUDA_STANDARD_REQUIRED ON
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    LINKER_LANGUAGE CXX
+    POSITION_INDEPENDENT_CODE ON
+)

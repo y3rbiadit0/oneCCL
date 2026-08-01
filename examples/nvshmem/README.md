@@ -252,3 +252,50 @@ The CTest definition uses the MPI launcher matching `MPI_DIR` and supplies the
 bundled Intel MPI, oneCCL library, Slurm bootstrap, shared-memory fabric, and
 oneCCL MPI transport environment. Do not export those settings globally in
 `leonardo_env.sh`: M0's NVSHMEM bootstrap intentionally uses HPC-X instead.
+
+M1 completed on Leonardo on 2026-08-01. The disabled build passed a two-rank
+native allreduce and rejected `CCL_BACKEND=nvshmem`. The enabled,
+NCCL-disabled CTest passed with two ranks and two GPUs in 3.99 seconds, and
+`libccl.so` had no NCCL or NVSHMEM runtime dependency.
+
+## M2 UID Host-Library Spike
+
+NVSHMEM 2.11 introduced socket-based UID bootstrap and host-library-only
+initialization. The `oneccl_nvshmem_uid_spike` executable validates those APIs
+before runtime lifecycle is added to `libccl`. MPI distributes the opaque UID
+in this standalone test, but NVSHMEM is initialized with
+`NVSHMEMX_INIT_WITH_UNIQUEID` and does not use an MPI bootstrap plugin.
+
+Build the spike with the existing Leonardo M0 driver:
+
+```bash
+./examples/nvshmem/build_leonardo_m0.sh --configure-only
+cmake --build "$SCRATCH/oneccl-nvshmem-m0-build" \
+  --parallel 16 --target oneccl_nvshmem_uid_spike
+```
+
+The Leonardo build wrapper selects the loaded Binutils 2.42 linker explicitly.
+Leonardo's system `/usr/bin/ld` cannot read GCC 12's compressed sections and
+does not support CMake 4.1's linker dependency-file option. Override automatic
+selection with `--linker FILE` or `NVSHMEM_M0_LINKER` when needed.
+
+Within a one-node, two-GPU Slurm allocation, load the runtime environment and
+launch two PEs:
+
+```bash
+source examples/nvshmem/leonardo_env.sh
+
+export NVSHMEM_REMOTE_TRANSPORT=${NVSHMEM_REMOTE_TRANSPORT:-ibrc}
+export NVSHMEM_IB_ENABLE_IBGDA=${NVSHMEM_IB_ENABLE_IBGDA:-0}
+export NVSHMEM_DISABLE_NCCL=${NVSHMEM_DISABLE_NCCL:-1}
+export NVSHMEM_IB_SL=${NVSHMEM_IB_SL:-1}
+export SHMEM_SYMMETRIC_SIZE=${SHMEM_SYMMETRIC_SIZE:-1G}
+unset NVSHMEM_BOOTSTRAP
+
+srun --nodes=1 --ntasks=2 --ntasks-per-node=2 --gpus-per-task=1 \
+  "$SCRATCH/oneccl-nvshmem-m0-build/oneccl_nvshmem_uid_spike"
+```
+
+The expected output is `PASSED: NVSHMEM UID host-library bootstrap`. Repeat
+with `--nodes=2 --ntasks=2 --ntasks-per-node=1` to validate cross-node UID
+bootstrap.
