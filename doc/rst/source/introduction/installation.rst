@@ -86,17 +86,20 @@ You can customize CLI-based installation (for example, you can specify the direc
 
      cmake .. -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DCOMPUTE_BACKEND=dpcpp
 
-* To enable the experimental NVSHMEM backend skeleton for CUDA-backed SYCL
-  devices, provide a DPC++ CUDA toolchain and an NVSHMEM installation:
+* To enable the experimental NVSHMEM backend for CUDA-backed SYCL devices,
+  provide DPC++ and CUDA compilers plus an NVSHMEM 2.11 or newer installation:
 
   ::
 
      cmake .. -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+       -DCMAKE_CUDA_COMPILER=nvcc \
        -DCOMPUTE_BACKEND=dpcpp -DCCL_ENABLE_NVSHMEM=ON \
        -DNVSHMEM_ROOT=</path/to/nvshmem>
 
-  The option is disabled by default. The M1 backend validates communicator
-  construction but reports collective operations as unsupported.
+  The option is disabled by default. The backend uses UID-based host-library
+  initialization and links ``libnvshmem_host`` for host and on-stream APIs.
+  Collective operations remain unsupported until their NVSHMEM implementations
+  are enabled.
 
 * To specify the **build type**, modify the ``cmake`` command:
 

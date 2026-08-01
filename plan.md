@@ -2,7 +2,7 @@
 
 ## Status
 
-- State: M0 implementation in progress
+- State: M0 and M1 complete; M2 bootstrap spike in progress
 - Target API: Existing oneCCL C++ collective API
 - Target compiler: DPC++ with the SYCL CUDA backend
 - Target NVSHMEM version: NVHPC 24.5's bundled 2.11 for M0; 3.7 or newer remains
@@ -81,6 +81,9 @@ Expected integration files:
 - `src/common/env/vars.hpp`
 - `src/comm/comm_selector.cpp`
 - `src/common/api_wrapper/api_wrapper.cpp`, if common lifecycle hooks remain necessary
+- `cmake/FindIntelSYCL_cuda.cmake`
+- `src/ccl_cpp_kvs.cpp`
+- `src/coll/group/group.cpp`
 - `doc/rst/source/env-variables.rst`
 - `doc/rst/source/introduction/installation.rst`
 
@@ -135,9 +138,9 @@ Use CUDA events or a dedicated internal stream to serialize operations on the sa
 
 | Milestone | Deliverable | Exit Criterion | Status |
 |---|---|---|---|
-| M0 | Toolchain and interoperability spike | A two-PE DPC++ program invokes an NVSHMEM on-stream collective on a native CUDA stream and observes completion through a SYCL event | In progress |
-| M1 | Optional backend skeleton | oneCCL builds with and without NVSHMEM, parses `CCL_BACKEND=nvshmem`, and constructs an NVSHMEM communicator | Not started |
-| M2 | Runtime, bootstrap, and symmetric staging | UID bootstrap, ownership-safe lifecycle, fixed symmetric arena, and chunked stream-ordered copies work across two nodes | Not started |
+| M0 | Toolchain and interoperability spike | A two-PE DPC++ program invokes an NVSHMEM on-stream collective on a native CUDA stream and observes completion through a SYCL event | Complete |
+| M1 | Optional backend skeleton | oneCCL builds with and without NVSHMEM, parses `CCL_BACKEND=nvshmem`, and constructs an NVSHMEM communicator | Complete |
+| M2 | Runtime, bootstrap, and symmetric staging | UID bootstrap, ownership-safe lifecycle, fixed symmetric arena, and chunked stream-ordered copies work across two nodes | Complete |
 | M3 | Dependencies, events, and ordering | Stream-taking and streamless calls honor dependencies and serialize same-team operations across streams | Not started |
 | M4 | Initial collective MVP | Barrier, allgather, allreduce, alltoall, and broadcast pass correctness tests on device USM buffers | Not started |
 | M5 | Public API coverage and fallback | Remaining collectives and required datatype/reduction cases work directly, compositionally, or through a documented correct fallback | Not started |
@@ -148,18 +151,18 @@ Use CUDA events or a dedicated internal stream to serialize operations on the sa
 
 Objective: Retire the highest-risk compiler, linker, stream interoperability, and runtime assumptions before modifying normal oneCCL dispatch.
 
-- [ ] Confirm the available NVSHMEM package version and CMake config targets.
-- [ ] Confirm DPC++ can create an in-order CUDA-backed SYCL queue on the target system.
-- [ ] Extract `cudaStream_t` from the SYCL queue.
-- [ ] Build a CUDA adapter translation unit with NVCC and relocatable device code.
-- [ ] Link `libnvshmem_host.so` and `libnvshmem_device.a` into a small mixed DPC++/CUDA executable.
-- [ ] Initialize NVSHMEM using UID bootstrap or the launcher-supported bootstrap for the spike.
-- [ ] Allocate a small symmetric source and destination buffer.
-- [ ] Enqueue an NVSHMEM barrier and one data collective on the extracted stream.
-- [ ] Submit a SYCL barrier after the NVSHMEM call and verify that waiting on the SYCL event observes the result.
-- [ ] Run with two PEs on one node.
-- [ ] Run with two PEs on separate nodes.
-- [ ] Record exact compiler, CUDA, NVSHMEM, linker, and launcher commands in `examples/nvshmem/README.md` or the implementation notes.
+- [x] Confirm the available NVSHMEM package version and CMake config targets.
+- [x] Confirm DPC++ can create an in-order CUDA-backed SYCL queue on the target system.
+- [x] Extract `cudaStream_t` from the SYCL queue.
+- [x] Build a CUDA adapter translation unit with NVCC and relocatable device code.
+- [x] Link `libnvshmem_host.so` and `libnvshmem_device.a` into a small mixed DPC++/CUDA executable.
+- [x] Initialize NVSHMEM using UID bootstrap or the launcher-supported bootstrap for the spike.
+- [x] Allocate a small symmetric source and destination buffer.
+- [x] Enqueue an NVSHMEM barrier and one data collective on the extracted stream.
+- [x] Submit a SYCL barrier after the NVSHMEM call and verify that waiting on the SYCL event observes the result.
+- [x] Run with two PEs on one node.
+- [x] Run with two PEs on separate nodes.
+- [x] Record exact compiler, CUDA, NVSHMEM, linker, and launcher commands in `examples/nvshmem/README.md` or the implementation notes.
 
 M0 acceptance tests:
 
@@ -203,28 +206,32 @@ M0 Leonardo compatibility checkpoint, 2026-07-31:
   assignments before NVSHMEM initialization. It finalizes NVSHMEM before owned
   MPI state.
 - The initial mixed DPC++/NVCC executable built successfully on Leonardo. The
-  MPI-bootstrap revision still requires one-node and multi-node runtime runs.
+  MPI-bootstrap revision also compiled and linked successfully against HPC-X
+  2.19 and NVHPC CUDA 12.4.
 - Local shell syntax, command generation, and whitespace checks pass. The local
-  macOS host cannot compile the target; the revised build and runtime validation
-  remain pending on Leonardo.
+  macOS host cannot compile the target.
+- M0 completed on Leonardo on 2026-07-31. Slurm job 51172113 passed with two
+  PEs on one node, and job 51172241 passed with one PE on each of two nodes.
+  Both jobs passed 1, 1024, and 1048576 float elements with MPI/NVSHMEM topology
+  checks, distinct CUDA UUID checks, and clean finalization.
 
 ## M1: Backend Skeleton
 
 Objective: Establish optional build and runtime selection without implementing data collectives.
 
-- [ ] Add `CCL_ENABLE_NVSHMEM`, defaulting to `OFF`.
-- [ ] Add `FindNVSHMEM.cmake` with an imported target and configuration-fatal checks when explicitly enabled dependencies are absent.
-- [ ] Add `CCL_ENABLE_NVSHMEM` to generated configuration headers.
-- [ ] Add `backend_mode::nvshmem` and the `"nvshmem"` parser mapping.
-- [ ] Add NVSHMEM source registration and target-local compile definitions.
-- [ ] Add `nvshmem_comm` implementing the required `comm_interface` surface.
-- [ ] Add device communicator dispatch beside NCCL and RCCL.
-- [ ] Keep host communicator creation on the native backend.
-- [ ] Validate that the communicator uses a SYCL CUDA device and context.
-- [ ] Add rank, size, device, context, and internal stream handling.
-- [ ] Return explicit not-supported errors from unimplemented operations.
-- [ ] Add a build-only test for NVSHMEM disabled.
-- [ ] Add a build-and-create smoke test for NVSHMEM enabled.
+- [x] Add `CCL_ENABLE_NVSHMEM`, defaulting to `OFF`.
+- [x] Add `FindNVSHMEM.cmake` with imported targets and configuration-fatal checks when explicitly enabled dependencies are absent.
+- [x] Add `CCL_ENABLE_NVSHMEM` to generated configuration headers.
+- [x] Add `backend_mode::nvshmem` and the `"nvshmem"` parser mapping.
+- [x] Add NVSHMEM source registration and compile definitions.
+- [x] Add `nvshmem_comm` implementing the required `comm_interface` surface.
+- [x] Add device communicator dispatch beside NCCL and RCCL.
+- [x] Keep host communicator creation on the native backend.
+- [x] Validate that the communicator uses a SYCL CUDA device and context.
+- [x] Add rank, size, device, context, and internal stream handling.
+- [x] Return explicit not-supported errors from unimplemented operations.
+- [x] Validate a build with `CCL_ENABLE_NVSHMEM=OFF`.
+- [x] Add a build-and-create smoke test for NVSHMEM enabled.
 
 M1 acceptance tests:
 
@@ -234,23 +241,69 @@ M1 acceptance tests:
 - Native host communicator behavior is unchanged.
 - Communicator construction and destruction complete on all PEs.
 
+M1 validation status:
+
+- The Leonardo M1 build completed all 162 targets, including `ccl` and
+  `nvshmem_m1_comm_test`.
+- A manual two-rank run passed communicator construction, native host
+  communicator behavior, metadata checks, and explicit unsupported-operation
+  handling.
+- The disabled build passed a two-rank native allreduce and rejected
+  `CCL_BACKEND=nvshmem` during environment parsing.
+- The enabled, NCCL-disabled `nvshmem_m1_comm_test` passed under CTest with two
+  ranks and two GPUs in 3.99 seconds. `libccl.so` had no NCCL or NVSHMEM runtime
+  dependency, as intended for the M1 skeleton.
+
 ## M2: Runtime And Staging
 
 Objective: Support arbitrary oneCCL device buffers without per-operation symmetric allocation.
 
-- [ ] Implement process-global NVSHMEM runtime state.
-- [ ] Select and validate the CUDA device before the first NVSHMEM operation.
-- [ ] Implement UID distribution through `kvs_interface`.
-- [ ] Verify oneCCL rank and size against NVSHMEM PE rank and world size.
-- [ ] Track external versus oneCCL-owned initialization.
-- [ ] Allocate the fixed symmetric arena collectively once.
-- [ ] Parse and validate `CCL_NVSHMEM_STAGING_SIZE`.
-- [ ] Partition source, destination, metadata, and signal regions.
-- [ ] Implement checked size arithmetic and deterministic chunk boundaries.
-- [ ] Implement stream-ordered copies for device and shared USM pointers.
-- [ ] Detect unsupported pointer residence and report it before communication starts.
-- [ ] Prevent arena reuse until the returned operation event completes.
-- [ ] Drain outstanding operations before owned finalization.
+- [x] Implement process-global NVSHMEM runtime state.
+- [x] Select and validate the CUDA device before the first NVSHMEM operation.
+- [x] Implement UID distribution through `kvs_interface`.
+- [x] Verify oneCCL rank and size against NVSHMEM PE rank and world size.
+- [x] Track external versus oneCCL-owned initialization.
+- [x] Allocate the fixed symmetric arena collectively once.
+- [x] Parse and validate `CCL_NVSHMEM_STAGING_SIZE`.
+- [x] Partition source, destination, metadata, and signal regions.
+- [x] Implement checked size arithmetic and deterministic chunk boundaries.
+- [x] Implement stream-ordered copies for device and shared USM pointers.
+- [x] Detect unsupported pointer residence and report it before communication starts.
+- [x] Prevent arena reuse until the returned operation event completes.
+- [x] Drain outstanding operations before owned finalization.
+
+M2 implementation checkpoint, 2026-08-01:
+
+- Started a standalone NVSHMEM 2.11 UID bootstrap spike before integrating
+  runtime lifecycle into `libccl`.
+- The spike uses `nvshmemx_hostlib_init_attr` so host and on-stream APIs do not
+  require `libnvshmem_device.a`. MPI only distributes the opaque UID for the
+  experiment; NVSHMEM does not receive or depend on an MPI communicator.
+- The standalone builder selects Leonardo's Binutils 2.42 linker explicitly;
+  the system linker is too old for GCC 12 compressed sections and CMake 4.1
+  linker dependency files.
+- The UID host-library spike passed with two PEs on one node and one PE on each
+  of two nodes. Both runs allocated and freed symmetric memory and finalized
+  cleanly without the NVSHMEM MPI bootstrap plugin.
+- Added the production host-library adapter and process-global runtime with
+  chunked hex-encoded KVS UID exchange, all-rank phase agreement, CUDA topology
+  checks, one fixed symmetric arena, strict size parsing, deterministic
+  chunking, device/shared USM staging, and owned versus external finalization.
+  Native CUDA work is integrated into the SYCL graph with native commands so
+  returned events cover staging completion and serialize arena reuse.
+- The hardware-gated runtime test now creates two communicators over one
+  process-global runtime and enables an internal staging validation covering
+  shared and device USM below, at, and above the lane boundary, repeated arena
+  reuse, returned-event completion, and host-pointer rejection. A separate test
+  requires the exact invalid-staging-size diagnostic.
+- The one-node, two-GPU CTest run passed both the runtime/staging test and the
+  invalid-size failure-path test.
+- M2 completed on Leonardo on 2026-08-01. Slurm job 51500159 ran rank 0 on
+  `lrdn0244` and rank 1 on `lrdn0245`, with one GPU per node. Intel MPI 2021.17
+  used its bundled libfabric 2.2.0-impi TCP provider for MPI control traffic;
+  NVSHMEM used UID bootstrap over `ib0` and the `ibrc` transport. The production
+  runtime passed UID exchange, communicator reuse, shared/device USM staging,
+  chunk boundaries, expected host-pointer rejection, and clean finalization.
 
 M2 acceptance tests:
 

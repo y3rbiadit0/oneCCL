@@ -22,6 +22,7 @@ Options:
   --skip-env             Use the already-loaded compiler/module environment
   --mpi-root DIR         Bundled Intel MPI root (default: <source-dir>/deps/mpi)
   --nccl-root DIR        NCCL installation root (default: $NCCL_ROOT or $NCCL_HOME)
+  --linker FILE          Host linker (default: Leonardo Binutils 2.42)
   -j, --jobs N           Parallel build jobs (default: $SLURM_CPUS_PER_TASK or 16)
   --clean                Remove the build directory before configuring (default)
   --no-clean             Reuse the existing build directory
@@ -36,7 +37,7 @@ Environment overrides:
   ONECCL_SOURCE_DIR, ONECCL_BUILD_DIR, ONECCL_INSTALL_PREFIX,
   ONECCL_ENV_SCRIPT, ONECCL_MPI_ROOT, ONECCL_NCCL_ROOT, ONECCL_JOBS,
   ONECCL_CLEAN, ONECCL_BUILD_EXAMPLES, ONECCL_INSTALL,
-  ONECCL_HOST_FLAGS, ONECCL_SYCL_FLAGS, ONECCL_LINK_FLAGS
+  ONECCL_LINKER, ONECCL_HOST_FLAGS, ONECCL_SYCL_FLAGS, ONECCL_LINK_FLAGS
   Boolean environment overrides use 1 (enabled) or 0 (disabled).
 
 Examples:
@@ -61,6 +62,7 @@ install_prefix=${ONECCL_INSTALL_PREFIX:-}
 env_script=${ONECCL_ENV_SCRIPT:-}
 mpi_root=${ONECCL_MPI_ROOT:-}
 nccl_root=
+linker=${ONECCL_LINKER:-}
 jobs=${ONECCL_JOBS:-}
 clean=${ONECCL_CLEAN:-1}
 build_examples=${ONECCL_BUILD_EXAMPLES:-0}
@@ -103,6 +105,11 @@ while [[ $# -gt 0 ]]; do
         --nccl-root)
             require_value "$@"
             nccl_root=$2
+            shift 2
+            ;;
+        --linker)
+            require_value "$@"
+            linker=$2
             shift 2
             ;;
         -j|--jobs)
@@ -201,14 +208,35 @@ gcc_root=${GCC12_ROOT:-${GCC_HOME:-}}
 gcc_lib=${GCC12_LIB:-$gcc_root/lib64}
 cuda_root=${CUDA_HOME:-${CUDA_ROOT:-${CUDA_PATH:-}}}
 [[ -n "$cuda_root" ]] || die "CUDA_HOME, CUDA_ROOT, or CUDA_PATH is not defined"
+cuda_compiler=$cuda_root/bin/nvcc
+cuda_host_compiler=$gcc_root/bin/g++
+[[ -x "$cuda_compiler" ]] || die "NVCC was not found: $cuda_compiler"
+[[ -x "$cuda_host_compiler" ]] || die "CUDA host compiler was not found: $cuda_host_compiler"
+
+if [[ -z "$linker" ]]; then
+    linker_candidates=(
+        /leonardo/prod/spack/*/install/*/linux-rhel8-icelake/gcc-8.5.0/binutils-2.42-*/bin/ld
+    )
+    for candidate in "${linker_candidates[@]}"; do
+        if [[ -x "$candidate" ]]; then
+            linker=$candidate
+            break
+        fi
+    done
+fi
+[[ -x "$linker" ]] || die "Leonardo Binutils 2.42 linker was not found; use --linker"
+linker_dir=$(dirname -- "$linker")
+linker_flag=-B$linker_dir
 
 sycl_target=${SYCL_TARGET:-nvptx64-nvidia-cuda}
 gpu_arch=${NVIDIA_GPU_ARCH:-sm_80}
-host_flags=${ONECCL_HOST_FLAGS:---gcc-toolchain=$gcc_root}
-sycl_flags=${ONECCL_SYCL_FLAGS:-${SYCL_FLAGS:--fsycl $host_flags -fsycl-targets=$sycl_target -Xsycl-target-backend=$sycl_target --cuda-gpu-arch=$gpu_arch}}
-link_flags=${ONECCL_LINK_FLAGS:-$host_flags -L$gcc_lib -Wl,-rpath,$gcc_lib -L$dpcpp_install/lib -Wl,-rpath,$dpcpp_install/lib -L$mpi_root/lib -Wl,-rpath,$mpi_root/lib}
+base_host_flags=${ONECCL_HOST_FLAGS:---gcc-toolchain=$gcc_root}
+host_flags="$base_host_flags $linker_flag"
+sycl_flags="${ONECCL_SYCL_FLAGS:-${SYCL_FLAGS:--fsycl $base_host_flags -fsycl-targets=$sycl_target -Xsycl-target-backend=$sycl_target --cuda-gpu-arch=$gpu_arch}} $linker_flag"
+link_flags="${ONECCL_LINK_FLAGS:--L$gcc_lib -Wl,-rpath,$gcc_lib -L$dpcpp_install/lib -Wl,-rpath,$dpcpp_install/lib -L$mpi_root/lib -Wl,-rpath,$mpi_root/lib} $linker_flag"
 
 export DPCPP_ROOT="$dpcpp_install"
+export CUDACXX="$cuda_compiler"
 export I_MPI_ROOT="$mpi_root"
 export NCCL_ROOT="$nccl_root"
 export CCL_ROOT="$install_prefix"
@@ -236,6 +264,7 @@ printf '%s\n' \
     "Bundled MPI:     $mpi_root" \
     "NCCL root:       $nccl_root" \
     "DPC++ root:      $dpcpp_install" \
+    "Host linker:     $linker" \
     "Parallel jobs:   $jobs"
 
 cmake_args=(
@@ -246,6 +275,11 @@ cmake_args=(
     "-DCMAKE_INSTALL_PREFIX=$install_prefix"
     "-DCMAKE_C_COMPILER=$dpcpp_clang"
     "-DCMAKE_CXX_COMPILER=$dpcpp_clangxx"
+    "-DCMAKE_CUDA_COMPILER=$cuda_compiler"
+    "-DCMAKE_CUDA_HOST_COMPILER=$cuda_host_compiler"
+    "-DCMAKE_CUDA_ARCHITECTURES=${gpu_arch#sm_}"
+    "-DCMAKE_LINKER=$linker"
+    -DCMAKE_LINK_DEPENDS_USE_LINKER=FALSE
     "-DCMAKE_C_FLAGS=$host_flags"
     "-DCMAKE_CXX_FLAGS=$sycl_flags"
     "-DCMAKE_CXX_FLAGS_RELEASE=$sycl_flags -O3 -DNDEBUG"

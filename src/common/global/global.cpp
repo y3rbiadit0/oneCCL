@@ -18,6 +18,9 @@
 #include "common/api_wrapper/pmix_api_wrapper.hpp"
 #include "common/datatype/datatype.hpp"
 #include "common/global/global.hpp"
+#ifdef CCL_ENABLE_NVSHMEM
+#include "common/nvshmem/nvshmem_runtime.hpp"
+#endif
 #include "exec/exec.hpp"
 #include "fusion/fusion.hpp"
 #include "parallelizer/parallelizer.hpp"
@@ -75,6 +78,13 @@ os_information& global_data::get_os_info() {
     return get().os_info;
 }
 
+#ifdef CCL_ENABLE_NVSHMEM
+nvshmem::runtime& global_data::get_nvshmem_runtime() {
+    CCL_THROW_IF_NOT(nvshmem_data, "NVSHMEM runtime state is not available");
+    return *nvshmem_data;
+}
+#endif
+
 ccl::status global_data::reset() {
     /*
         executor is resize_dependent object but out of regular reset procedure
@@ -88,6 +98,10 @@ ccl::status global_data::reset() {
     ze_data.reset();
 #endif // CCL_ENABLE_ZE && CCL_ENABLE_SYCL
 
+#ifdef CCL_ENABLE_NVSHMEM
+    nvshmem_data.reset();
+#endif
+
     pmix_api_fini();
 
     api_wrappers_fini();
@@ -97,6 +111,12 @@ ccl::status global_data::reset() {
 
 ccl::status global_data::init() {
     env_object.parse();
+
+#ifdef CCL_ENABLE_NVSHMEM
+    if (env_object.backend == backend_mode::nvshmem) {
+        nvshmem_data = std::make_unique<nvshmem::runtime>();
+    }
+#endif
 
     pmix_api_init();
 

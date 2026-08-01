@@ -48,6 +48,11 @@ namespace ccl {
 
 class buffer_cache;
 class recycle_storage;
+#ifdef CCL_ENABLE_NVSHMEM
+namespace nvshmem {
+class runtime;
+}
+#endif
 
 struct os_information {
     std::string sysname;
@@ -76,6 +81,9 @@ public:
     static global_data& get();
     static env_data& env();
     static os_information& get_os_info();
+#ifdef CCL_ENABLE_NVSHMEM
+    nvshmem::runtime& get_nvshmem_runtime();
+#endif
 
     /* public methods to have access from listener thread function */
     void init_resize_dependent_objects();
@@ -99,6 +107,9 @@ public:
 #if defined(CCL_ENABLE_ZE) && defined(CCL_ENABLE_SYCL)
     std::unique_ptr<ze::global_data_desc> ze_data;
 #endif // CCL_ENABLE_ZE && CCL_ENABLE_SYCL
+#ifdef CCL_ENABLE_NVSHMEM
+    std::unique_ptr<nvshmem::runtime> nvshmem_data;
+#endif
 
     static thread_local bool is_worker_thread;
     bool is_ft_enabled{ false };

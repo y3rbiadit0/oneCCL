@@ -289,7 +289,7 @@ export NVSHMEM_REMOTE_TRANSPORT=${NVSHMEM_REMOTE_TRANSPORT:-ibrc}
 export NVSHMEM_IB_ENABLE_IBGDA=${NVSHMEM_IB_ENABLE_IBGDA:-0}
 export NVSHMEM_DISABLE_NCCL=${NVSHMEM_DISABLE_NCCL:-1}
 export NVSHMEM_IB_SL=${NVSHMEM_IB_SL:-1}
-export SHMEM_SYMMETRIC_SIZE=${SHMEM_SYMMETRIC_SIZE:-1G}
+export NVSHMEM_SYMMETRIC_SIZE=${NVSHMEM_SYMMETRIC_SIZE:-1G}
 unset NVSHMEM_BOOTSTRAP
 
 srun --nodes=1 --ntasks=2 --ntasks-per-node=2 --gpus-per-task=1 \
@@ -299,3 +299,109 @@ srun --nodes=1 --ntasks=2 --ntasks-per-node=2 --gpus-per-task=1 \
 The expected output is `PASSED: NVSHMEM UID host-library bootstrap`. Repeat
 with `--nodes=2 --ntasks=2 --ntasks-per-node=1` to validate cross-node UID
 bootstrap.
+
+## M2 oneCCL Runtime Validation
+
+Configure the production backend with NVCC, NVSHMEM host-library linkage, and
+the hardware tests enabled:
+
+```bash
+source examples/nvshmem/leonardo_env.sh
+
+./build-leonardo-sycl.sh --skip-env \
+  --build-dir "$SCRATCH/oneccl-nvshmem-m2-build" \
+  --install-prefix "$HOME/opt/oneccl-nvshmem-m2" \
+  --clean --no-examples --no-install --configure-only -- \
+  -DCCL_ENABLE_NCCL=OFF \
+  -DCCL_ENABLE_NVSHMEM=ON \
+  -DENABLE_MPI_TESTS=ON \
+  -DBUILD_FT=ON \
+  -DNVSHMEM_ROOT="$NVSHMEM_HOME"
+
+cmake --build "$SCRATCH/oneccl-nvshmem-m2-build" \
+  --parallel 16 --target ccl nvshmem_m1_comm_test
+```
+
+From a one-node, two-GPU allocation, run both the runtime/staging test and its
+failure-path test:
+
+```bash
+ctest --test-dir "$SCRATCH/oneccl-nvshmem-m2-build" \
+  --output-on-failure -L nvshmem
+```
+
+The positive test uses a 1 MiB arena and exercises shared/device USM staging
+for messages below, equal to, and above the resulting lane size. Collective
+APIs remain explicitly unsupported until M4.
+
+For the two-node exit test, request exactly one task and one GPU per node:
+
+```bash
+salloc \
+  -A IscrC_HIGRAPH_0 \
+  -p boost_usr_prod \
+  --time=00:10:00 \
+  --nodes=2 \
+  --ntasks-per-node=1 \
+  --gres=gpu:1 \
+  --cpus-per-task=8
+```
+
+The bundled Intel MPI needs libfabric for cross-node startup. The following
+uses the Intel MPI libfabric installation already validated by
+comm-playground's oneCCL jobs. Do not source its `oneccl-nccl.sh` runtime
+directly because that script forces `CCL_BACKEND=nccl`.
+
+```bash
+repo=$PWD
+build_dir="$SCRATCH/oneccl-nvshmem-m2-build"
+mpi_root="$repo/deps/mpi"
+
+export COMM_PLAYGROUND_ROOT=${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}
+export ONECCL_NCCL_ROOT=${ONECCL_NCCL_ROOT:-$HOME/opt/oneccl-nccl-leonardo}
+source "$repo/examples/nvshmem/leonardo_env.sh"
+
+fabric_dir=${ONECCL_LIBFABRIC_DIR:-$ONECCL_NCCL_ROOT/opt/mpi/libfabric/lib}
+provider_dir=${ONECCL_LIBFABRIC_PROVIDER_DIR:-$fabric_dir/prov-tcp-only}
+test_bin="$build_dir/tests/nvshmem/nvshmem_m1_comm_test"
+
+test -f "$fabric_dir/libfabric.so.1"
+test -f "$fabric_dir/prov/libtcp-fi.so"
+mkdir -p "$provider_dir"
+ln -sf "$fabric_dir/prov/libtcp-fi.so" "$provider_dir/libtcp-fi.so"
+
+export LC_ALL=C
+export PATH="$mpi_root/bin:$PATH"
+export LD_LIBRARY_PATH="$build_dir/src:$mpi_root/lib:$fabric_dir:$ONECCL_NCCL_ROOT/opt/mpi/lib/release:$ONECCL_NCCL_ROOT/opt/mpi/lib:${LD_LIBRARY_PATH:-}"
+
+env -u NVSHMEM_BOOTSTRAP \
+  CCL_BACKEND=nvshmem \
+  CCL_ATL_TRANSPORT=mpi \
+  CCL_MPI_LIBRARY_PATH="$mpi_root/lib/libmpi.so.12" \
+  CCL_NVSHMEM_VALIDATE_STAGING=1 \
+  CCL_NVSHMEM_STAGING_SIZE=1M \
+  I_MPI_ROOT="$mpi_root" \
+  I_MPI_HYDRA_BOOTSTRAP=slurm \
+  I_MPI_FABRICS=shm:ofi \
+  I_MPI_OFI_PROVIDER=tcp \
+  I_MPI_DEBUG=5 \
+  FI_PROVIDER=tcp \
+  FI_PROVIDER_PATH="$provider_dir" \
+  FI_LOG_LEVEL=error \
+  NVSHMEM_REMOTE_TRANSPORT=ibrc \
+  NVSHMEM_IB_ENABLE_IBGDA=0 \
+  NVSHMEM_DISABLE_NCCL=1 \
+  NVSHMEM_IB_SL=1 \
+  NVSHMEM_SYMMETRIC_SIZE=1G \
+  "$mpi_root/bin/mpiexec.hydra" -n 2 -ppn 1 \
+  "$COMM_PLAYGROUND_ROOT/cluster/leonardo/gpu-rank-wrapper.sh" \
+  "$test_bin"
+```
+
+`I_MPI_DEBUG=5` prints the rank-to-node mapping. The deliberate host-pointer
+rejection emits `CCL_ERROR` diagnostics during this test and is expected.
+
+M2 completed on Leonardo on 2026-08-01. The one-node CTest passed both tests.
+Slurm job 51500159 passed the production runtime with rank 0 on `lrdn0244` and
+rank 1 on `lrdn0245`, using Intel MPI 2021.17, libfabric 2.2.0-impi with the TCP
+provider, NVSHMEM UID bootstrap over `ib0`, and the NVSHMEM `ibrc` transport.

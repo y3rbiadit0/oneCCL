@@ -18,15 +18,20 @@
 
 #ifdef CCL_ENABLE_NVSHMEM
 
+#include "common/global/global.hpp"
+#include "common/nvshmem/nvshmem_runtime.hpp"
+
 #include <algorithm>
+#include <cstdlib>
+#include <exception>
 #include <limits>
 
 namespace ccl {
 
 namespace {
 
-#define NVSHMEM_M1_UNSUPPORTED(operation) \
-    CCL_THROW(#operation " is not supported by the NVSHMEM M1 backend")
+#define NVSHMEM_UNSUPPORTED(operation) \
+    CCL_THROW(#operation " is not supported by the NVSHMEM backend")
 
 } // namespace
 
@@ -60,6 +65,31 @@ nvshmem_comm::nvshmem_comm(device_t device,
 
     internal_queue = std::make_shared<sycl::queue>(
         native_context, native_device, sycl::property::queue::in_order{});
+
+    auto& runtime = ccl::global_data::get().get_nvshmem_runtime();
+    runtime.initialize(native_device, native_context, comm_rank, comm_size, this->kvs);
+    try {
+        const char* validate_staging = std::getenv("CCL_NVSHMEM_VALIDATE_STAGING");
+        const bool validation_enabled =
+            validate_staging != nullptr && std::string(validate_staging) == "1";
+        runtime.validate_staging(*internal_queue, validation_enabled);
+    }
+    catch (...) {
+        runtime.release();
+        throw;
+    }
+}
+
+nvshmem_comm::~nvshmem_comm() noexcept {
+    try {
+        ccl::global_data::get().get_nvshmem_runtime().release();
+    }
+    catch (const std::exception& error) {
+        LOG_WARN("NVSHMEM communicator destruction failed: ", error.what());
+    }
+    catch (...) {
+        LOG_WARN("NVSHMEM communicator destruction failed with an unknown error");
+    }
 }
 
 nvshmem_comm* nvshmem_comm::create(device_t device,
@@ -75,13 +105,13 @@ nvshmem_comm* nvshmem_comm::create(device_t device,
 }
 
 ccl::comm_interface_ptr nvshmem_comm::split(int color, int key, bool split_external_use) {
-    NVSHMEM_M1_UNSUPPORTED(split);
+    NVSHMEM_UNSUPPORTED(split);
 }
 
 ccl::event nvshmem_comm::barrier(const ccl::stream::impl_value_t& stream,
                                  const ccl::barrier_attr& attr,
                                  const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(barrier);
+    NVSHMEM_UNSUPPORTED(barrier);
 }
 
 ccl::event nvshmem_comm::allgather_impl(const void* send_buf,
@@ -91,7 +121,7 @@ ccl::event nvshmem_comm::allgather_impl(const void* send_buf,
                                         const ccl::stream::impl_value_t& stream,
                                         const ccl::allgather_attr& attr,
                                         const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(allgather);
+    NVSHMEM_UNSUPPORTED(allgather);
 }
 
 ccl::event nvshmem_comm::allgather_impl(const void* send_buf,
@@ -101,7 +131,7 @@ ccl::event nvshmem_comm::allgather_impl(const void* send_buf,
                                         const ccl::stream::impl_value_t& stream,
                                         const ccl::allgather_attr& attr,
                                         const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(allgather);
+    NVSHMEM_UNSUPPORTED(allgather);
 }
 
 ccl::event nvshmem_comm::allgatherv_impl(
@@ -113,7 +143,7 @@ ccl::event nvshmem_comm::allgatherv_impl(
     const ccl::stream::impl_value_t& stream,
     const ccl::allgatherv_attr& attr,
     const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(allgatherv);
+    NVSHMEM_UNSUPPORTED(allgatherv);
 }
 
 ccl::event nvshmem_comm::allgatherv_impl(
@@ -125,7 +155,7 @@ ccl::event nvshmem_comm::allgatherv_impl(
     const ccl::stream::impl_value_t& stream,
     const ccl::allgatherv_attr& attr,
     const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(allgatherv);
+    NVSHMEM_UNSUPPORTED(allgatherv);
 }
 
 ccl::event nvshmem_comm::allreduce_impl(const void* send_buf,
@@ -136,7 +166,7 @@ ccl::event nvshmem_comm::allreduce_impl(const void* send_buf,
                                         const ccl::stream::impl_value_t& stream,
                                         const ccl::allreduce_attr& attr,
                                         const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(allreduce);
+    NVSHMEM_UNSUPPORTED(allreduce);
 }
 
 ccl::event nvshmem_comm::alltoall_impl(const void* send_buf,
@@ -146,7 +176,7 @@ ccl::event nvshmem_comm::alltoall_impl(const void* send_buf,
                                        const ccl::stream::impl_value_t& stream,
                                        const ccl::alltoall_attr& attr,
                                        const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(alltoall);
+    NVSHMEM_UNSUPPORTED(alltoall);
 }
 
 ccl::event nvshmem_comm::alltoallv_impl(
@@ -158,7 +188,7 @@ ccl::event nvshmem_comm::alltoallv_impl(
     const ccl::stream::impl_value_t& stream,
     const ccl::alltoallv_attr& attr,
     const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(alltoallv);
+    NVSHMEM_UNSUPPORTED(alltoallv);
 }
 
 ccl::event nvshmem_comm::broadcast_impl(void* buf,
@@ -168,7 +198,7 @@ ccl::event nvshmem_comm::broadcast_impl(void* buf,
                                         const ccl::stream::impl_value_t& stream,
                                         const ccl::broadcast_attr& attr,
                                         const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(broadcast);
+    NVSHMEM_UNSUPPORTED(broadcast);
 }
 
 ccl::event nvshmem_comm::broadcast_impl(void* send_buf,
@@ -179,7 +209,7 @@ ccl::event nvshmem_comm::broadcast_impl(void* send_buf,
                                         const ccl::stream::impl_value_t& stream,
                                         const ccl::broadcast_attr& attr,
                                         const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(broadcast);
+    NVSHMEM_UNSUPPORTED(broadcast);
 }
 
 ccl::event nvshmem_comm::reduce_impl(const void* send_buf,
@@ -191,7 +221,7 @@ ccl::event nvshmem_comm::reduce_impl(const void* send_buf,
                                      const ccl::stream::impl_value_t& stream,
                                      const ccl::reduce_attr& attr,
                                      const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(reduce);
+    NVSHMEM_UNSUPPORTED(reduce);
 }
 
 ccl::event nvshmem_comm::reduce_scatter_impl(
@@ -203,7 +233,7 @@ ccl::event nvshmem_comm::reduce_scatter_impl(
     const ccl::stream::impl_value_t& stream,
     const ccl::reduce_scatter_attr& attr,
     const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(reduce_scatter);
+    NVSHMEM_UNSUPPORTED(reduce_scatter);
 }
 
 ccl::event nvshmem_comm::recv_impl(void* recv_buf,
@@ -213,7 +243,7 @@ ccl::event nvshmem_comm::recv_impl(void* recv_buf,
                                    const ccl::stream::impl_value_t& stream,
                                    const ccl::pt2pt_attr& attr,
                                    const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(recv);
+    NVSHMEM_UNSUPPORTED(recv);
 }
 
 ccl::event nvshmem_comm::send_impl(void* send_buf,
@@ -223,10 +253,10 @@ ccl::event nvshmem_comm::send_impl(void* send_buf,
                                    const ccl::stream::impl_value_t& stream,
                                    const ccl::pt2pt_attr& attr,
                                    const ccl::vector_class<ccl::event>& deps) {
-    NVSHMEM_M1_UNSUPPORTED(send);
+    NVSHMEM_UNSUPPORTED(send);
 }
 
-#undef NVSHMEM_M1_UNSUPPORTED
+#undef NVSHMEM_UNSUPPORTED
 
 } // namespace ccl
 

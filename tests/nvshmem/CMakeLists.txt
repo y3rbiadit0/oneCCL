@@ -40,7 +40,8 @@ find_program(
 
 add_test(
     NAME ${test_name}
-    COMMAND ${NVSHMEM_M1_MPIEXEC_EXECUTABLE} -n 2 $<TARGET_FILE:${test_name}>
+    COMMAND ${CMAKE_COMMAND} -E env --unset=NVSHMEM_BOOTSTRAP
+            ${NVSHMEM_M1_MPIEXEC_EXECUTABLE} -n 2 $<TARGET_FILE:${test_name}>
 )
 set(nvshmem_m1_test_environment
     "CCL_BACKEND=nvshmem"
@@ -48,15 +49,41 @@ set(nvshmem_m1_test_environment
     "CCL_MPI_LIBRARY_PATH=${MPI_LIB_DIR}/libmpi.so.12"
     "I_MPI_HYDRA_BOOTSTRAP=slurm"
     "I_MPI_FABRICS=shm"
+    "NVSHMEM_REMOTE_TRANSPORT=ibrc"
+    "NVSHMEM_IB_ENABLE_IBGDA=0"
+    "NVSHMEM_DISABLE_NCCL=1"
+    "NVSHMEM_IB_SL=1"
+    "NVSHMEM_SYMMETRIC_SIZE=1G"
+    "CCL_NVSHMEM_VALIDATE_STAGING=1"
     "LD_LIBRARY_PATH=${CCL_BUILD_DIR}:${MPI_LIB_DIR}:$ENV{LD_LIBRARY_PATH}"
 )
 set_tests_properties(
     ${test_name}
     PROPERTIES
         ENVIRONMENT
-            "${nvshmem_m1_test_environment}"
+            "${nvshmem_m1_test_environment};CCL_NVSHMEM_STAGING_SIZE=1M"
         LABELS "nvshmem;cuda;gpu"
         PROCESSORS 2
         RUN_SERIAL TRUE
-        TIMEOUT 60
+        TIMEOUT 180
+)
+
+set(invalid_staging_test_name nvshmem_m2_invalid_staging_test)
+add_test(
+    NAME ${invalid_staging_test_name}
+    COMMAND ${CMAKE_COMMAND}
+            -DMPIEXEC=${NVSHMEM_M1_MPIEXEC_EXECUTABLE}
+            -DTEST_EXECUTABLE=$<TARGET_FILE:${test_name}>
+            "-DEXPECTED_TEXT=CCL_NVSHMEM_STAGING_SIZE has no numeric value"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake
+)
+set_tests_properties(
+    ${invalid_staging_test_name}
+    PROPERTIES
+        ENVIRONMENT
+            "${nvshmem_m1_test_environment};CCL_NVSHMEM_STAGING_SIZE=invalid"
+        LABELS "nvshmem;cuda;gpu"
+        PROCESSORS 2
+        RUN_SERIAL TRUE
+        TIMEOUT 180
 )

@@ -139,6 +139,8 @@ endif(CCL_ENABLE_RCCL)
 
 if (CCL_ENABLE_NVSHMEM)
     list(APPEND EXTENSIONS_SRC
+        common/nvshmem/nvshmem_adapter.cu
+        common/nvshmem/nvshmem_runtime.cpp
         comm/nvshmem_comm.cpp
     )
 endif(CCL_ENABLE_NVSHMEM)
@@ -412,6 +414,11 @@ set_target_properties(ccl-objects PROPERTIES POSITION_INDEPENDENT_CODE 1)
 target_include_directories(ccl-objects PRIVATE ${SRC_INCLUDE_DIRS})
 target_include_directories(ccl-objects SYSTEM PRIVATE ${SRC_SYSTEM_INCLUDE_DIRS})
 
+if (CCL_ENABLE_NVSHMEM)
+    target_compile_features(ccl-objects PRIVATE cuda_std_17)
+    target_link_libraries(ccl-objects PRIVATE NVSHMEM::host CUDA::cudart)
+endif()
+
 if (COMPUTE_BACKEND_TARGET_NAME)
     target_include_directories(ccl-objects PUBLIC ${COMPUTE_BACKEND_INCLUDE_DIRS})
 endif()
@@ -420,6 +427,10 @@ endif()
 add_library(ccl SHARED $<TARGET_OBJECTS:ccl-objects>)
 target_include_directories(ccl PUBLIC ${SRC_INCLUDE_DIRS})
 target_link_libraries(ccl PRIVATE ${SRC_LINK_LIBS})
+if (CCL_ENABLE_NVSHMEM)
+    target_link_libraries(ccl PRIVATE NVSHMEM::host CUDA::cudart)
+    set_target_properties(ccl PROPERTIES LINKER_LANGUAGE CXX)
+endif()
 
 set_target_properties(ccl PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CCL_BUILD_DIR})
 if (NOT LIB_SO_VERSION AND NOT LIB_MAJOR_VERSION)
@@ -450,6 +461,9 @@ install(FILES
 # static library
 add_library(ccl-static STATIC $<TARGET_OBJECTS:ccl-objects>)
 set_target_properties(ccl-static PROPERTIES OUTPUT_NAME ccl)
+if (CCL_ENABLE_NVSHMEM)
+    target_link_libraries(ccl-static PUBLIC NVSHMEM::host CUDA::cudart)
+endif()
 set_target_properties(ccl-static PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${CCL_BUILD_DIR})
 install(TARGETS ccl-static ARCHIVE DESTINATION ${CCL_INSTALL_LIB} OPTIONAL)
 

@@ -61,7 +61,7 @@ void group_impl::start() {
 
 #ifdef CCL_ENABLE_NVSHMEM
     CCL_THROW_IF_NOT(ccl::global_data::env().backend != ::backend_mode::nvshmem,
-                     "group calls are not supported by the NVSHMEM M1 backend");
+                     "group calls are not supported by the NVSHMEM backend");
 #endif
 
 #ifdef CCL_ENABLE_NCCL

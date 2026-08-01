@@ -33,7 +33,7 @@ public:
     nvshmem_comm(nvshmem_comm&& src) = delete;
     nvshmem_comm& operator=(nvshmem_comm& src) = delete;
     nvshmem_comm& operator=(nvshmem_comm&& src) = delete;
-    ~nvshmem_comm() override = default;
+    ~nvshmem_comm() noexcept override;
 
     static nvshmem_comm* create(device_t device,
                                 context_t context,

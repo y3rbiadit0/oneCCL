@@ -11,8 +11,20 @@ CCL_BACKEND
 Selects the process-wide communicator backend. The default value is ``native``.
 An NVSHMEM-enabled build also accepts ``nvshmem`` for CUDA-backed SYCL device
 communicators. Host communicators continue to use the native implementation.
-The experimental M1 NVSHMEM backend supports communicator construction only;
-collective operations and group calls report an explicit unsupported error.
+The experimental NVSHMEM backend initializes a process-global NVSHMEM runtime
+and fixed symmetric staging arena when the first CUDA device communicator is
+created. Collective operations and group calls remain unsupported until their
+NVSHMEM implementations are enabled.
+
+CCL_NVSHMEM_STAGING_SIZE
+========================
+
+Sets the process-global symmetric staging arena size. The default is ``64M``.
+Values accept byte counts or the case-insensitive suffixes ``K``, ``M``, and
+``G`` (an optional trailing ``B`` is accepted). The value must be identical on
+all PEs and large enough for source, destination, metadata, and signal regions.
+The final NVSHMEM communicator should be destroyed collectively on all PEs so
+oneCCL can drain the arena, free it in matching order, and finalize owned state.
 
 .. _collective-algorithms-selection:
 
@@ -2610,4 +2622,3 @@ available, the memory the application requires, and the message size of the
 collectives used. With larger values, oneCCL consumes more memory but can
 provide higher performance. Similarly, small values will reduce memory
 utilization, but can degrade performance.
-

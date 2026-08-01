@@ -118,6 +118,12 @@ int main(int argc, char** argv) {
             throw std::runtime_error("communicator device or context changed during construction");
         }
 
+        auto second_comm = ccl::create_communicator(
+            size, rank, ccl_device, ccl_context, kvs);
+        if (second_comm.rank() != rank || second_comm.size() != size) {
+            throw std::runtime_error("second communicator did not reuse the process runtime");
+        }
+
         auto stream = ccl::create_stream(queue);
         bool unsupported = false;
         try {
@@ -125,10 +131,10 @@ int main(int argc, char** argv) {
         }
         catch (const std::exception& error) {
             const std::string message = error.what();
-            unsupported = message.find("NVSHMEM M1") != std::string::npos;
+            unsupported = message.find("NVSHMEM backend") != std::string::npos;
         }
         if (!unsupported) {
-            throw std::runtime_error("NVSHMEM M1 barrier did not fail explicitly");
+            throw std::runtime_error("NVSHMEM barrier did not fail explicitly");
         }
     }
     catch (const std::exception& error) {
@@ -139,7 +145,7 @@ int main(int argc, char** argv) {
     int global_result = EXIT_FAILURE;
     MPI_Allreduce(&result, &global_result, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if (rank == 0 && global_result == EXIT_SUCCESS) {
-        std::cout << "PASSED: NVSHMEM M1 communicator skeleton" << std::endl;
+        std::cout << "PASSED: NVSHMEM M2 runtime and communicator" << std::endl;
     }
     MPI_Finalize();
     return global_result;
