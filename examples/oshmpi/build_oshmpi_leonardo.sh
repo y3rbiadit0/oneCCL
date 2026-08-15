@@ -127,9 +127,31 @@ mkdir -p "$smoke_dir"
     -o "$smoke_dir/oshmpi_mpi_ownership_smoke"
 
 grep -q '^#define OSHMPI_PRESERVE_EXTERNAL_MPI 1$' "$install_prefix/include/shmem.h"
-if ! nm -D "$install_prefix/lib/liboshmpi.so" | grep -q ' oshmpi_preserves_external_mpi$'; then
-    printf 'error: patched ownership symbol is absent from installed liboshmpi\n' >&2
-    exit 2
+
+# The smoke test above links against oshmpi_preserves_external_mpi, so a successful
+# link already proves the symbol is exported. This is a belt-and-braces check, and
+# it must not report a missing symbol when the real problem is that nm could not be
+# run or could not read the library.
+oshmpi_library="$install_prefix/lib/liboshmpi.so"
+if ! command -v nm >/dev/null 2>&1; then
+    printf 'warning: nm not found in PATH; skipping the exported-symbol check\n' >&2
+else
+    if ! nm_output=$(nm -D "$oshmpi_library" 2>&1); then
+        printf 'error: could not read symbols from %s\n' "$oshmpi_library" >&2
+        printf '%s\n' "$nm_output" >&2
+        exit 2
+    fi
+    # Defined symbols start with an address; undefined ones start with blanks.
+    if ! printf '%s\n' "$nm_output" |
+        grep -q '^[^[:space:]].*[[:space:]]oshmpi_preserves_external_mpi$'; then
+        printf 'error: patched ownership symbol is absent from installed liboshmpi: %s\n' \
+            "$oshmpi_library" >&2
+        printf 'matching entries in nm -D output:\n' >&2
+        printf '%s\n' "$nm_output" | grep -i 'preserve' >&2 ||
+            printf '  (none - nm reported %s symbols in total)\n' \
+                "$(printf '%s\n' "$nm_output" | grep -c .)" >&2
+        exit 2
+    fi
 fi
 
 printf 'patched OSHMPI installed at %s\n' "$install_prefix"
