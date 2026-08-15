@@ -18,15 +18,20 @@ install_prefix=${OSHMPI_INSTALL_PREFIX:-$HOME/opt/oshmpi-$OSHMPI_PINNED_SHORT-on
 patch_file="$project_root/examples/oshmpi/patches/0001-preserve-external-mpi-ownership.patch"
 
 # The patch is what makes OSHMPI leave an externally initialized MPI alone and
-# stop MPI_T_init_thread from lowering HPC-X to MPI_THREAD_SINGLE. FindOSHMPI.cmake
-# refuses to configure without it, so fail here with something actionable rather
-# than letting `git apply` report a missing path.
-if [[ ! -f "$patch_file" ]]; then
-    printf 'error: OSHMPI external-MPI ownership patch is missing: %s\n' "$patch_file" >&2
-    printf 'regenerate it from the patched worktree, for example:\n' >&2
-    printf '  git -C "$OSHMPI_SOURCE_DIR" diff %s > %s\n' \
+# stop MPI_T_init_thread from lowering HPC-X to MPI_THREAD_SINGLE. It is only
+# needed when the worktree is not already patched, so the hard requirement lives
+# at the point of use below; report a missing file here only as a warning.
+missing_patch_message() {
+    printf 'the OSHMPI external-MPI ownership patch is not in the repository: %s\n' \
+        "$patch_file" >&2
+    printf 'regenerate it from an already-patched worktree and commit it:\n' >&2
+    printf '  git -C <patched-oshmpi-worktree> diff %s -- . ":(exclude)src/openpa" > %s\n' \
         "$OSHMPI_PINNED_COMMIT" "$patch_file" >&2
-    exit 2
+}
+
+if [[ ! -f "$patch_file" ]]; then
+    printf 'warning: ' >&2
+    missing_patch_message
 fi
 
 if [[ ! -d "$base_source/.git" ]]; then
@@ -74,7 +79,18 @@ if grep -q 'OSHMPI_PRESERVE_EXTERNAL_MPI' "$source_dir/include/shmem.h.in.tpl"; 
         printf 'use a fresh OSHMPI_SOURCE_DIR and OSHMPI_BUILD_DIR\n' >&2
         exit 2
     fi
+    printf 'ownership patch already applied in %s\n' "$source_dir"
+    if [[ ! -f "$patch_file" ]]; then
+        printf 'note: this worktree is the only copy of the patch - capture it with:\n' >&2
+        printf '  git -C %s diff %s -- . ":(exclude)src/openpa" > %s\n' \
+            "$source_dir" "$OSHMPI_PINNED_COMMIT" "$patch_file" >&2
+    fi
 else
+    if [[ ! -f "$patch_file" ]]; then
+        printf 'error: ' >&2
+        missing_patch_message
+        exit 2
+    fi
     git -C "$source_dir" apply --check "$patch_file"
     git -C "$source_dir" apply "$patch_file"
 fi
