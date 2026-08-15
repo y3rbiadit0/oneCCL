@@ -137,6 +137,14 @@ if (CCL_ENABLE_RCCL)
     )
 endif(CCL_ENABLE_RCCL)
 
+if (CCL_ENABLE_OSHMPI)
+    list (APPEND EXTENSIONS_SRC
+        common/oshmpi/oshmpi_runtime.cpp
+        oshmpi_kvs_impl.cpp
+        comm/oshmpi_comm.cpp
+    )
+endif(CCL_ENABLE_OSHMPI)
+
 set(CCL_SRC
 
     atl/atl_base_comm.cpp
@@ -394,6 +402,10 @@ if (ENABLE_MPI)
     list(APPEND SRC_INCLUDE_DIRS ${MPI_INCLUDE_DIR})
 endif()
 
+if (CCL_ENABLE_OSHMPI)
+    list(APPEND SRC_LINK_LIBS OSHMPI::oshmpi)
+endif()
+
 link_directories(${SRC_LINK_DIRS})
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${SRC_C_FLAGS} -pthread")
@@ -405,6 +417,10 @@ add_library(ccl-objects OBJECT ${CCL_SRC})
 set_target_properties(ccl-objects PROPERTIES POSITION_INDEPENDENT_CODE 1)
 target_include_directories(ccl-objects PRIVATE ${SRC_INCLUDE_DIRS})
 target_include_directories(ccl-objects SYSTEM PRIVATE ${SRC_SYSTEM_INCLUDE_DIRS})
+
+if (CCL_ENABLE_OSHMPI)
+    target_link_libraries(ccl-objects PRIVATE OSHMPI::oshmpi)
+endif()
 
 if (COMPUTE_BACKEND_TARGET_NAME)
     target_include_directories(ccl-objects PUBLIC ${COMPUTE_BACKEND_INCLUDE_DIRS})
@@ -445,6 +461,9 @@ install(FILES
 add_library(ccl-static STATIC $<TARGET_OBJECTS:ccl-objects>)
 set_target_properties(ccl-static PROPERTIES OUTPUT_NAME ccl)
 set_target_properties(ccl-static PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${CCL_BUILD_DIR})
+if (CCL_ENABLE_OSHMPI)
+    target_link_libraries(ccl-static PUBLIC OSHMPI::oshmpi)
+endif()
 install(TARGETS ccl-static ARCHIVE DESTINATION ${CCL_INSTALL_LIB} OPTIONAL)
 
 # API headers

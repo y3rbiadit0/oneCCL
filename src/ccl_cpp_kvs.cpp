@@ -35,6 +35,9 @@
 #ifdef CCL_ENABLE_RCCL
 #include "rccl_kvs_impl.hpp"
 #endif // CCL_ENABLE_RCCL
+#ifdef CCL_ENABLE_OSHMPI
+#include "oshmpi_kvs_impl.hpp"
+#endif // CCL_ENABLE_OSHMPI
 
 namespace ccl {
 base_kvs_impl::base_kvs_impl(const kvs::address_type& addr) : addr(addr) {}
@@ -127,6 +130,11 @@ static base_kvs_impl* get_kvs_impl(const kvs::address_type& addr, const kvs_attr
         return new rccl_kvs_impl(addr);
     }
 #endif // CCL_ENABLE_RCCL
+#ifdef CCL_ENABLE_OSHMPI
+    if (ccl::global_data::env().backend == backend_mode::oshmpi) {
+        return new oshmpi_kvs_impl(addr);
+    }
+#endif // CCL_ENABLE_OSHMPI
     return new native_kvs_impl(addr, attr);
 }
 
@@ -147,6 +155,11 @@ static base_kvs_impl* get_kvs_impl(const kvs_attr& attr) {
         return new rccl_kvs_impl();
     }
 #endif // CCL_ENABLE_RCCL
+#ifdef CCL_ENABLE_OSHMPI
+    if (ccl::global_data::env().backend == backend_mode::oshmpi) {
+        return new oshmpi_kvs_impl();
+    }
+#endif // CCL_ENABLE_OSHMPI
 
     return new native_kvs_impl(attr);
 }

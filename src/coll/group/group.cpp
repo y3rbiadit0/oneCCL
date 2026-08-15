@@ -69,6 +69,11 @@ void group_impl::start() {
     }
 #endif
 
+#ifdef CCL_ENABLE_OSHMPI
+    CCL_THROW_IF_NOT(ccl::global_data::env().backend != ::backend_mode::oshmpi,
+                     "group operations are not supported for OSHMPI backend");
+#endif // CCL_ENABLE_OSHMPI
+
     start_native();
     lifecycle.backend = ::backend_mode::native;
     lifecycle.depth = 1;

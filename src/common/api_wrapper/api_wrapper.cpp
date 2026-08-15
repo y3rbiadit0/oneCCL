@@ -39,14 +39,24 @@ namespace ccl {
 
 void api_wrappers_init() {  
     bool ofi_inited = true, mpi_inited = true;
-    if (!(ofi_inited = ofi_api_init())) {
-        LOG_INFO("could not initialize OFI api");
-    }
+    bool native_transport_required = true;
+#if defined(CCL_ENABLE_OSHMPI)
+    native_transport_required = ccl::global_data::env().backend != backend_mode::oshmpi;
+#endif // CCL_ENABLE_OSHMPI
+
+    if (native_transport_required) {
+        if (!(ofi_inited = ofi_api_init())) {
+            LOG_INFO("could not initialize OFI api");
+        }
 #if defined(CCL_ENABLE_MPI)
-    if (!(mpi_inited = mpi_api_init())) {
-        LOG_INFO("could not initialize MPI api");
-    }
+        if (!(mpi_inited = mpi_api_init())) {
+            LOG_INFO("could not initialize MPI api");
+        }
 #endif //CCL_ENABLE_MPI
+    }
+    else {
+        LOG_INFO("OSHMPI backend provides its MPI transport directly");
+    }
 #if defined(CCL_ENABLE_NCCL)
     if (!nccl_api_init()) {
         LOG_INFO("could not initialize NCCL api");
@@ -57,15 +67,17 @@ void api_wrappers_init() {
         LOG_INFO("could not initialize RCCL api");
     }
 #endif //CCL_ENABLE_RCCL
-    CCL_THROW_IF_NOT(ofi_inited || mpi_inited, "could not initialize any transport library");
-    if (!ofi_inited && (ccl::global_data::env().atl_transport == ccl_atl_ofi)) {
-        ccl::global_data::env().atl_transport = ccl_atl_mpi;
-        LOG_WARN("OFI transport was not initialized, fallback to MPI transport");
-    }
+    if (native_transport_required) {
+        CCL_THROW_IF_NOT(ofi_inited || mpi_inited, "could not initialize any transport library");
+        if (!ofi_inited && (ccl::global_data::env().atl_transport == ccl_atl_ofi)) {
+            ccl::global_data::env().atl_transport = ccl_atl_mpi;
+            LOG_WARN("OFI transport was not initialized, fallback to MPI transport");
+        }
 
-    if (!mpi_inited && (ccl::global_data::env().atl_transport == ccl_atl_mpi)) {
-        ccl::global_data::env().atl_transport = ccl_atl_ofi;
-        LOG_WARN("MPI transport was not initialized, fallback to OFI transport");
+        if (!mpi_inited && (ccl::global_data::env().atl_transport == ccl_atl_mpi)) {
+            ccl::global_data::env().atl_transport = ccl_atl_ofi;
+            LOG_WARN("MPI transport was not initialized, fallback to OFI transport");
+        }
     }
 
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)

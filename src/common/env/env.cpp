@@ -71,6 +71,9 @@ std::map<backend_mode, std::string> env_data::backend_names = {
 #ifdef CCL_ENABLE_RCCL
     std::make_pair(backend_mode::rccl, "rccl"),
 #endif // CCL_ENABLE_RCCL
+#ifdef CCL_ENABLE_OSHMPI
+    std::make_pair(backend_mode::oshmpi, "oshmpi"),
+#endif // CCL_ENABLE_OSHMPI
 };
 
 std::map<process_launcher_mode, std::string> env_data::process_launcher_names = {

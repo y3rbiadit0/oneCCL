@@ -847,8 +847,10 @@ event broadcast(void* buf,
                 const broadcast_attr& attr,
                 const vector_class<event>& deps) {
     impl_dispatch disp;
-    if (ccl::global_data::env().use_mpi_bcast_wa) {
-        ccl_comm* global_comm = (ccl_comm*)(disp(comm).get());
+    if (ccl::global_data::env().backend == backend_mode::native &&
+        ccl::global_data::env().use_mpi_bcast_wa) {
+        ccl_comm* global_comm = dynamic_cast<ccl_comm*>(disp(comm).get());
+        CCL_THROW_IF_NOT(global_comm, "MPI broadcast workaround requires a native communicator");
         return invoke_mpi_bcast(buf, count, dtype, root, global_comm, op_stream, attr, deps);
     }
     return disp(comm)->bcast(buf, count, dtype, root, disp(op_stream), attr, deps);
