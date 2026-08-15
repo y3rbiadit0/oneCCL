@@ -21,12 +21,15 @@ namespace ccl {
 
 // static file functions
 
+#ifdef CCL_ENABLE_MPI
+// only consulted when selecting the MPI transport below
 static bool is_run_with_mpi() {
     return (getenv("MPI_LOCALRANKID") || getenv("MPI_LOCALNRANKS") || getenv("PMI_RANK") ||
             getenv("PMI_SIZE") || getenv("PMIX_RANK"))
                ? true
                : false;
 }
+#endif // CCL_ENABLE_MPI
 
 // env_parser class implementation
 

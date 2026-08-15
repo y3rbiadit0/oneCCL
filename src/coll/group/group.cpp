@@ -126,7 +126,10 @@ void group_impl::end() {
 #endif
 
     end_native();
-    lifecycle = group_lifecycle_state{};
+    // end_native() already clears is_group_active; reset_group_lifecycle() clears
+    // it alongside the rest of the state, so both backends tear down identically
+    // and the helper stays referenced when NCCL is not built.
+    reset_group_lifecycle();
 }
 
 void group_impl::end_native() {
