@@ -28,7 +28,8 @@
 
 #define ATL_MPI_RANK_STR_SIZE 8
 
-#define ATL_MPI_ROOT_RANK_KEY "ROOT_RANK"
+/* ATL_MPI_ROOT_RANK_KEY lives in atl/atl_def.h - it is also used by the
+ * resizable PMI implementation, which is compiled without MPI support */
 
 #define MPI_BFLOAT16 \
     ({ \

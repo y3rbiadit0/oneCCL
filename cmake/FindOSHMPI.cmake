@@ -2,7 +2,15 @@
 #
 # OSHMPI_INCLUDE_DIR - where to find shmem.h
 # OSHMPI_LIBRARY - OSHMPI shared library
+# OSHMPI_CUDART_LIBRARY - CUDA runtime required by CUDA-enabled OSHMPI builds
 # OSHMPI_FOUND - true if OSHMPI was found and validated
+#
+# OSHMPI is OpenSHMEM over MPI, so it carries its own MPI dependency. That MPI is
+# discovered here with the standard FindMPI module and is deliberately independent
+# of oneCCL's MPI_DIR/MPI_INCLUDE_DIR, which describe the vendored Intel MPI used
+# by the native ATL transport. Point this at a specific MPI with MPI_C_COMPILER.
+
+find_package(MPI REQUIRED COMPONENTS C)
 
 set(_OSHMPI_ROOT_HINTS
     "${OSHMPI_ROOT}"
@@ -25,7 +33,24 @@ find_library(OSHMPI_LIBRARY
     PATH_SUFFIXES lib lib64)
 set(CMAKE_FIND_LIBRARY_SUFFIXES ${_OSHMPI_ORIGINAL_LIBRARY_SUFFIXES})
 
-set(_OSHMPI_CHECK_FINGERPRINT "${OSHMPI_INCLUDE_DIR}|${OSHMPI_LIBRARY}|${MPI_INCLUDE_DIR}")
+find_library(OSHMPI_CUDART_LIBRARY
+    NAMES cudart
+    HINTS
+        "${CUDA_ROOT}"
+        "$ENV{CUDA_ROOT}"
+        "${CUDA_HOME}"
+        "$ENV{CUDA_HOME}"
+    PATH_SUFFIXES lib64 lib)
+
+set(_OSHMPI_LINK_LIBRARIES ${OSHMPI_LIBRARY} MPI::MPI_C)
+if (OSHMPI_CUDART_LIBRARY)
+    list(APPEND _OSHMPI_LINK_LIBRARIES ${OSHMPI_CUDART_LIBRARY})
+endif()
+
+# Re-run the probe when the OSHMPI install or its MPI changes, so switching MPI
+# modules cannot silently reuse a stale cached result.
+set(_OSHMPI_CHECK_FINGERPRINT
+    "${OSHMPI_INCLUDE_DIR}|${OSHMPI_LIBRARY}|${OSHMPI_CUDART_LIBRARY}|${MPI_C_COMPILER}")
 if (NOT "${OSHMPI_CHECK_FINGERPRINT}" STREQUAL "${_OSHMPI_CHECK_FINGERPRINT}")
     unset(OSHMPI_COMPILES_AND_LINKS CACHE)
 endif()
@@ -36,8 +61,8 @@ if (OSHMPI_INCLUDE_DIR AND OSHMPI_LIBRARY)
     include(CheckCXXSourceCompiles)
     set(_OSHMPI_REQUIRED_INCLUDES ${CMAKE_REQUIRED_INCLUDES})
     set(_OSHMPI_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES})
-    set(CMAKE_REQUIRED_INCLUDES ${OSHMPI_INCLUDE_DIR} ${MPI_INCLUDE_DIR})
-    set(CMAKE_REQUIRED_LIBRARIES ${OSHMPI_LIBRARY})
+    set(CMAKE_REQUIRED_INCLUDES ${OSHMPI_INCLUDE_DIR} ${MPI_C_INCLUDE_DIRS})
+    set(CMAKE_REQUIRED_LIBRARIES ${_OSHMPI_LINK_LIBRARIES})
     check_cxx_source_compiles([=[
 #include <stdint.h>
 #include <shmem.h>
@@ -91,14 +116,26 @@ find_package_handle_standard_args(OSHMPI
 
 if (OSHMPI_FOUND)
     set(OSHMPI_INCLUDE_DIRS ${OSHMPI_INCLUDE_DIR})
-    set(OSHMPI_LIBRARIES ${OSHMPI_LIBRARY})
+    set(OSHMPI_LIBRARIES ${_OSHMPI_LINK_LIBRARIES})
 
     if (NOT TARGET OSHMPI::oshmpi)
+        # MPI::MPI_C carries OSHMPI's MPI include dirs and link flags transitively,
+        # so consumers get the same MPI that OSHMPI was validated against.
+        set(_OSHMPI_INTERFACE_LIBRARIES MPI::MPI_C)
+        if (OSHMPI_CUDART_LIBRARY)
+            list(APPEND _OSHMPI_INTERFACE_LIBRARIES "${OSHMPI_CUDART_LIBRARY}")
+        endif()
+
         add_library(OSHMPI::oshmpi SHARED IMPORTED)
         set_target_properties(OSHMPI::oshmpi PROPERTIES
             IMPORTED_LOCATION "${OSHMPI_LIBRARY}"
-            INTERFACE_INCLUDE_DIRECTORIES "${OSHMPI_INCLUDE_DIR}")
+            INTERFACE_INCLUDE_DIRECTORIES "${OSHMPI_INCLUDE_DIR}"
+            INTERFACE_LINK_LIBRARIES "${_OSHMPI_INTERFACE_LIBRARIES}")
     endif()
 endif()
 
-mark_as_advanced(OSHMPI_INCLUDE_DIR OSHMPI_LIBRARY OSHMPI_COMPILES_AND_LINKS)
+mark_as_advanced(
+    OSHMPI_INCLUDE_DIR
+    OSHMPI_LIBRARY
+    OSHMPI_CUDART_LIBRARY
+    OSHMPI_COMPILES_AND_LINKS)

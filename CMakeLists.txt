@@ -154,9 +154,16 @@ message(STATUS "MPI_INCLUDE_DIR: ${MPI_INCLUDE_DIR}")
 message(STATUS "MPI_LIB_DIR: ${MPI_LIB_DIR}")
 
 if (CCL_ENABLE_OSHMPI)
-    if (NOT ENABLE_MPI)
-        message(FATAL_ERROR "CCL_ENABLE_OSHMPI requires ENABLE_MPI=ON")
+    # Phase 1 stages every collective through host symmetric memory, so device
+    # buffers are rejected at runtime. Fail here instead of at the first
+    # unsupported communicator.
+    if (CCL_ENABLE_SYCL)
+        message(FATAL_ERROR
+                "CCL_ENABLE_OSHMPI is host-only in Phase 1; configure with CCL_ENABLE_SYCL=OFF")
     endif()
+    # OSHMPI supplies its own MPI transport. oneCCL's native MPI ATL targets the
+    # MPICH ABI (it dlopens libmpi.so.12 and drives I_MPI_* knobs), so the two are
+    # independent: ENABLE_MPI stays free to be OFF here.
     find_package(OSHMPI REQUIRED)
     add_definitions(-DCCL_ENABLE_OSHMPI)
 endif()
@@ -420,8 +427,8 @@ if (ENABLE_MPI_TESTS)
         if (CCL_ENABLE_NCCL AND CCL_ENABLE_SYCL)
             add_subdirectory(tests/nccl)
         endif()
-        if (CCL_ENABLE_OSHMPI)
-            add_subdirectory(tests/oshmpi)
-        endif()
+    endif()
+    if (CCL_ENABLE_OSHMPI)
+        add_subdirectory(tests/oshmpi)
     endif()
 endif()

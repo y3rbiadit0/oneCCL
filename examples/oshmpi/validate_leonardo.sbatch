@@ -12,13 +12,13 @@
 
 set -euo pipefail
 
-source_dir=${ONECCL_SOURCE_DIR:?set ONECCL_SOURCE_DIR}
-build_dir=${ONECCL_BUILD_DIR:-$SCRATCH/oneccl-oshmpi}
+oneccl_source_dir=${ONECCL_SOURCE_DIR:?set ONECCL_SOURCE_DIR}
+oneccl_build_dir=${ONECCL_BUILD_DIR:-$SCRATCH/oneccl-oshmpi-gcc}
 playground_root=${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}
-test_binary="$build_dir/tests/oshmpi/oshmpi_collectives_test"
+test_binary="$oneccl_build_dir/tests/oshmpi/oshmpi_collectives_test"
 
 mkdir -p ./logs
-source "$source_dir/examples/oshmpi/leonardo_env.sh" "$playground_root"
+source "$oneccl_source_dir/examples/oshmpi/leonardo_env.sh" "$playground_root"
 export COMM_PLAYGROUND_JOB_NODES=${SLURM_NNODES:-1}
 source "$playground_root/cluster/leonardo/runtime/oshmpi.sh"
 

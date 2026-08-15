@@ -19,7 +19,6 @@
 #include <vector>
 
 #include "atl/atl_def.h"
-#include "atl/mpi/atl_mpi.hpp"
 #include "atl/util/pm/pmi_resizable_rt/pmi_resizable/kvs/internal_kvs.h"
 #include "util/pm/pmi_resizable_rt/pmi_resizable/helper.hpp"
 #include "atl/util/pm/pm_rt.h"

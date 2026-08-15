@@ -39,7 +39,8 @@ void validate_attributes(const attr_type& attr) {
                      "OSHMPI backend does not support operation priority");
     CCL_THROW_IF_NOT(!attr.template get<ccl::operation_attr_id::to_cache>(),
                      "OSHMPI backend does not support operation caching");
-    CCL_THROW_IF_NOT(attr.template get<ccl::operation_attr_id::match_id>().empty(),
+    // ccl::string exposes length(), not empty() - see coll_param.cpp
+    CCL_THROW_IF_NOT(attr.template get<ccl::operation_attr_id::match_id>().length() == 0,
                      "OSHMPI backend does not support match identifiers");
 }
 
@@ -55,7 +56,10 @@ void validate_buffer(const void* buffer, std::size_t count, const char* name) {
     CCL_THROW_IF_NOT(count == 0 || buffer, name, " must be non-null for a non-zero count");
 }
 
-[[noreturn]] void unsupported(const char* operation) {
+// Not named `unsupported`: ccl::unsupported is an exception type exported by
+// oneapi/ccl/exception.hpp, and an unqualified call from inside namespace ccl
+// would be ambiguous against it.
+[[noreturn]] void throw_unsupported(const char* operation) {
     CCL_THROW(operation, " is not supported for OSHMPI backend");
 }
 
@@ -204,7 +208,7 @@ ccl::event oshmpi_comm::broadcast_impl(void* send_buf,
 
 #define CCL_OSHMPI_UNSUPPORTED_IMPL(name, signature) \
     ccl::event oshmpi_comm::name signature { \
-        unsupported(#name); \
+        throw_unsupported(#name); \
     }
 
 CCL_OSHMPI_UNSUPPORTED_IMPL(allgatherv_impl,

@@ -18,6 +18,7 @@
 #ifdef CCL_ENABLE_OSHMPI
 
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 
 #include "oneapi/ccl/types.hpp"
@@ -73,6 +74,8 @@ private:
     int world_rank = -1;
     int world_size = 0;
     char* staging = nullptr;
+    // symmetric scratch for the startup agreement reductions
+    std::uint64_t* scratch = nullptr;
     std::size_t lane_size = 0;
 };
 

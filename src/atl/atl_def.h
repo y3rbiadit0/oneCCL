@@ -44,6 +44,10 @@
 #define ATL_PROGRESS_MODE_ENV "ATL_PROGRESS_MODE"
 #define ATL_MAX_HOSTNAME_LEN  64
 
+/* shared by the MPI transport and the resizable PMI implementation, so it must
+ * stay outside the MPI-only headers to keep ENABLE_MPI=OFF builds compiling */
+#define ATL_MPI_ROOT_RANK_KEY "ROOT_RANK"
+
 #define DIR_SEP  '/'
 #define FILENAME (strrchr(__FILE__, DIR_SEP) ? strrchr(__FILE__, DIR_SEP) + 1 : __FILE__)
 

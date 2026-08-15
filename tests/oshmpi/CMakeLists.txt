@@ -16,17 +16,11 @@
 
 set(test_name oshmpi_collectives_test)
 
-add_executable(${test_name} ${test_name}.cpp)
-target_include_directories(${test_name} PRIVATE ${PROJECT_SOURCE_DIR}/include ${MPI_INCLUDE_DIR})
-target_link_directories(${test_name} PRIVATE ${MPI_LIB_DIR})
-target_link_libraries(${test_name} PRIVATE ccl mpi OSHMPI::oshmpi rt m)
+find_package(MPI REQUIRED COMPONENTS C)
 
-find_program(
-    MPIEXEC_EXECUTABLE
-    NAMES mpiexec mpirun
-    HINTS "${MPI_DIR}/bin" "${PROJECT_SOURCE_DIR}/deps/mpi/bin"
-    REQUIRED
-)
+add_executable(${test_name} ${test_name}.cpp)
+target_include_directories(${test_name} PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(${test_name} PRIVATE ccl MPI::MPI_C OSHMPI::oshmpi rt m)
 
 add_test(
     NAME ${test_name}

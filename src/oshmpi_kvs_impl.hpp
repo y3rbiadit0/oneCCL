@@ -17,6 +17,19 @@
 
 #ifdef CCL_ENABLE_OSHMPI
 
+// kvs_impl.hpp pulls in oneapi/ccl/kvs.hpp, which expects the kvs_attr stack to
+// already be visible. Pull it in explicitly so this header is self-contained,
+// matching stub_kvs_impl.hpp.
+#include "oneapi/ccl/types.hpp"
+#include "oneapi/ccl/aliases.hpp"
+
+#include "oneapi/ccl/type_traits.hpp"
+#include "oneapi/ccl/types_policy.hpp"
+
+#include "oneapi/ccl/kvs_attr_ids.hpp"
+#include "oneapi/ccl/kvs_attr_ids_traits.hpp"
+#include "oneapi/ccl/kvs_attr.hpp"
+
 #include "kvs_impl.hpp"
 
 namespace ccl {

@@ -57,6 +57,7 @@ bool allgatherv(const std::shared_ptr<atl_base_comm>& comm,
     // other MPI collectives from other threads when both sycl
     // and scheduler paths are running together. MPI_Allgatherv
     // seems to not have the issue, and so using it here.
+#ifdef CCL_ENABLE_MPI
     if (ccl::global_data::env().atl_transport == ccl_atl_mpi &&
         ccl::global_data::env().ipc_allgatherv_wa) {
         const size_t send_len = recv_bytes[comm_rank];
@@ -91,7 +92,9 @@ bool allgatherv(const std::shared_ptr<atl_base_comm>& comm,
                                        mpi_comm);
         ret = mpi_ret == MPI_SUCCESS;
     }
-    else {
+    else
+#endif // CCL_ENABLE_MPI
+    {
         atl_status_t status = comm->allgatherv(0 /* ep_idx */,
                                                send_buf,
                                                recv_bytes[comm_rank],

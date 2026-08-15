@@ -27,7 +27,10 @@
 
 #include <shmem.h>
 
-#include "oneapi/ccl/api_functions.hpp"
+// api_functions.hpp declares get_datatype_size but includes nothing itself - it
+// expects the umbrella header to have established the type stack first.
+#include "oneapi/ccl.hpp"
+
 #include "common/datatype/datatype.hpp"
 #include "common/log/log.hpp"
 
@@ -36,11 +39,19 @@ namespace {
 
 constexpr std::size_t default_staging_size = 64UL * 1024UL * 1024UL;
 constexpr std::size_t staging_alignment = 64;
-std::uint64_t symmetric_staging_request = 0;
-std::uint64_t symmetric_staging_min = 0;
-std::uint64_t symmetric_staging_max = 0;
-std::uint64_t symmetric_preflight = 0;
-std::uint64_t symmetric_preflight_result = 0;
+
+/* Slots in the symmetric scratch block used to agree on startup parameters.
+ * OpenSHMEM only guarantees remote accessibility for the symmetric heap and the
+ * executable's data segment - a shared library's statics are not symmetric, so
+ * these reduction operands must come from shmem_malloc. */
+enum scratch_slot {
+    scratch_preflight_source,
+    scratch_preflight_result,
+    scratch_staging_request,
+    scratch_staging_min,
+    scratch_staging_max,
+    scratch_slot_count
+};
 
 std::size_t checked_multiply(std::size_t left, std::size_t right, const char* description) {
     CCL_THROW_IF_NOT(right == 0 || left <= std::numeric_limits<std::size_t>::max() / right,
@@ -116,14 +127,23 @@ void oshmpi_runtime::acquire(std::size_t size, std::size_t rank) {
 
     int provided = SHMEM_THREAD_SINGLE;
     const int status = shmem_init_thread(SHMEM_THREAD_SERIALIZED, &provided);
+    // A failed init leaves no runtime to run collectives on, so there is nothing
+    // to coordinate with the other PEs - report it directly.
+    CCL_THROW_IF_NOT(status == SHMEM_SUCCESS, "shmem_init_thread failed with status ", status);
     initialized = true;
 
     try {
         world_rank = shmem_my_pe();
         world_size = shmem_n_pes();
-        bool local_preflight = status == SHMEM_SUCCESS && provided >= SHMEM_THREAD_SERIALIZED &&
-                               world_rank >= 0 && world_size > 0 &&
-                               size == static_cast<std::size_t>(world_size) &&
+
+        // Collective, and must run on every PE before any branch that can throw.
+        scratch = static_cast<std::uint64_t*>(
+            shmem_malloc(sizeof(std::uint64_t) * scratch_slot_count));
+        CCL_THROW_IF_NOT(scratch,
+                         "shmem_malloc failed for OSHMPI scratch; increase SHMEM_SYMMETRIC_SIZE");
+
+        bool local_preflight = provided >= SHMEM_THREAD_SERIALIZED && world_rank >= 0 &&
+                               world_size > 0 && size == static_cast<std::size_t>(world_size) &&
                                rank == static_cast<std::size_t>(world_rank);
 
         std::size_t requested_size = 0;
@@ -134,28 +154,28 @@ void oshmpi_runtime::acquire(std::size_t size, std::size_t rank) {
             local_preflight = false;
         }
 
-        symmetric_preflight = local_preflight ? 1 : 0;
+        scratch[scratch_preflight_source] = local_preflight ? 1 : 0;
         check_status(shmem_uint64_min_reduce(SHMEM_TEAM_WORLD,
-                                             &symmetric_preflight_result,
-                                             &symmetric_preflight,
+                                             &scratch[scratch_preflight_result],
+                                             &scratch[scratch_preflight_source],
                                              1),
                      "OSHMPI initialization preflight");
-        CCL_THROW_IF_NOT(symmetric_preflight_result == 1,
+        CCL_THROW_IF_NOT(scratch[scratch_preflight_result] == 1,
                          "OSHMPI initialization parameters are inconsistent or invalid; "
                          "check rank, size, thread level, and CCL_OSHMPI_STAGING_SIZE on every PE");
 
-        symmetric_staging_request = static_cast<std::uint64_t>(requested_size);
+        scratch[scratch_staging_request] = static_cast<std::uint64_t>(requested_size);
         check_status(shmem_uint64_min_reduce(SHMEM_TEAM_WORLD,
-                                             &symmetric_staging_min,
-                                             &symmetric_staging_request,
+                                             &scratch[scratch_staging_min],
+                                             &scratch[scratch_staging_request],
                                              1),
                      "OSHMPI staging-size minimum agreement");
         check_status(shmem_uint64_max_reduce(SHMEM_TEAM_WORLD,
-                                             &symmetric_staging_max,
-                                             &symmetric_staging_request,
+                                             &scratch[scratch_staging_max],
+                                             &scratch[scratch_staging_request],
                                              1),
                      "OSHMPI staging-size maximum agreement");
-        CCL_THROW_IF_NOT(symmetric_staging_min == symmetric_staging_max,
+        CCL_THROW_IF_NOT(scratch[scratch_staging_min] == scratch[scratch_staging_max],
                          "CCL_OSHMPI_STAGING_SIZE must be identical on every PE");
 
         lane_size = (requested_size / 2 / staging_alignment) * staging_alignment;
@@ -178,6 +198,10 @@ void oshmpi_runtime::acquire(std::size_t size, std::size_t rank) {
         if (staging) {
             shmem_free(staging);
             staging = nullptr;
+        }
+        if (scratch) {
+            shmem_free(scratch);
+            scratch = nullptr;
         }
         if (initialized) {
             shmem_finalize();
@@ -205,6 +229,10 @@ void oshmpi_runtime::release() noexcept {
     if (staging) {
         shmem_free(staging);
         staging = nullptr;
+    }
+    if (scratch) {
+        shmem_free(scratch);
+        scratch = nullptr;
     }
     if (initialized) {
         shmem_finalize();

@@ -17,6 +17,18 @@ build_dir=${OSHMPI_BUILD_DIR:-$SCRATCH/oshmpi-$OSHMPI_PINNED_SHORT-oneccl-patch$
 install_prefix=${OSHMPI_INSTALL_PREFIX:-$HOME/opt/oshmpi-$OSHMPI_PINNED_SHORT-oneccl}
 patch_file="$project_root/examples/oshmpi/patches/0001-preserve-external-mpi-ownership.patch"
 
+# The patch is what makes OSHMPI leave an externally initialized MPI alone and
+# stop MPI_T_init_thread from lowering HPC-X to MPI_THREAD_SINGLE. FindOSHMPI.cmake
+# refuses to configure without it, so fail here with something actionable rather
+# than letting `git apply` report a missing path.
+if [[ ! -f "$patch_file" ]]; then
+    printf 'error: OSHMPI external-MPI ownership patch is missing: %s\n' "$patch_file" >&2
+    printf 'regenerate it from the patched worktree, for example:\n' >&2
+    printf '  git -C "$OSHMPI_SOURCE_DIR" diff %s > %s\n' \
+        "$OSHMPI_PINNED_COMMIT" "$patch_file" >&2
+    exit 2
+fi
+
 if [[ ! -d "$base_source/.git" ]]; then
     printf 'error: base OSHMPI checkout not found: %s\n' "$base_source" >&2
     exit 2

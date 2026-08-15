@@ -401,10 +401,16 @@ kvs_status_t internal_kvs::kvs_main_server_address_reserve(char* main_address) {
              main_server_address->get_sin_port());
     // add rank to main_address
     if (!can_use_internal_kvs()) {
+#ifdef CCL_ENABLE_MPI
         int rank;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         int str_len = strnlen(main_address, ccl::v1::kvs::address_max_size);
         sprintf(main_address + str_len, "_%d", rank);
+#else // CCL_ENABLE_MPI
+        LOG_ERROR("internal kvs requires MPI transport to disambiguate the main address,"
+                  " but the library was built with ENABLE_MPI=OFF");
+        return KVS_STATUS_FAILURE;
+#endif // CCL_ENABLE_MPI
     }
 
     return KVS_STATUS_SUCCESS;
