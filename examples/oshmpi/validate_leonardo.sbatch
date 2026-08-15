@@ -22,10 +22,23 @@ source "$oneccl_source_dir/examples/oshmpi/leonardo_env.sh" "$playground_root"
 export COMM_PLAYGROUND_JOB_NODES=${SLURM_NNODES:-1}
 source "$playground_root/cluster/leonardo/runtime/oshmpi.sh"
 
+# oneCCL builds with CMAKE_SKIP_RPATH, so nothing records where libccl.so.1 or
+# liboshmpi.so live. Put both on the loader path explicitly.
+export LD_LIBRARY_PATH="$oneccl_build_dir/src${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if [[ -n "${OSHMPI_HOME:-}" ]]; then
+    export LD_LIBRARY_PATH="$OSHMPI_HOME/lib:$LD_LIBRARY_PATH"
+fi
+
 export CCL_BACKEND=oshmpi
 export CCL_LOG_LEVEL=${CCL_LOG_LEVEL:-info}
-export CCL_OSHMPI_STAGING_SIZE=${CCL_OSHMPI_STAGING_SIZE:-128}
-export SHMEM_SYMMETRIC_SIZE=${SHMEM_SYMMETRIC_SIZE:-128M}
+
+# leonardo_env.sh, sourced above, already exports a production-sized arena
+# (CCL_OSHMPI_STAGING_SIZE=64M) and SHMEM_SYMMETRIC_SIZE=1G. A ${VAR:-...}
+# default here would therefore never apply. Override the arena deliberately:
+# the point of this job is to force every collective through the chunking path,
+# which a 64M arena would skip entirely for the test's payload sizes.
+# 128 bytes is the smallest value that still yields two aligned lanes.
+export CCL_OSHMPI_STAGING_SIZE=${ONECCL_VALIDATE_STAGING_SIZE:-128}
 
 [[ -x "$test_binary" ]] || {
     printf 'error: test executable not found: %s\n' "$test_binary" >&2
