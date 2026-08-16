@@ -183,10 +183,28 @@ void oshmpi_runtime::acquire(std::size_t size, std::size_t rank) {
 
     int provided = SHMEM_THREAD_SINGLE;
     const int status = shmem_init_thread(SHMEM_THREAD_SERIALIZED, &provided);
-    // A failed init leaves no runtime to run collectives on, so there is nothing
-    // to coordinate with the other PEs - report it directly.
-    CCL_THROW_IF_NOT(status == SHMEM_SUCCESS, "shmem_init_thread failed with status ", status);
+
+    /* OSHMPI returns SHMEM_OTHER_ERR purely when it granted less than requested,
+     * having degraded to whatever level MPI reports; MPI errors abort inside
+     * OSHMPI instead. A lower level is not fatal here: every runtime call is
+     * serialized under operation_mutex and collectives run synchronously on the
+     * caller's thread, so SHMEM_THREAD_SINGLE is enough for a single-threaded
+     * application. Applications that call oneCCL from several threads must
+     * initialize MPI with at least MPI_THREAD_SERIALIZED themselves - requiring
+     * it unconditionally would lock out every caller that uses plain MPI_Init. */
+    CCL_THROW_IF_NOT(provided >= SHMEM_THREAD_SINGLE,
+                     "shmem_init_thread failed with status ",
+                     status,
+                     " and provided thread level ",
+                     provided);
     initialized = true;
+    if (status != SHMEM_SUCCESS) {
+        LOG_INFO("OSHMPI granted thread level ",
+                 provided,
+                 " rather than the requested SHMEM_THREAD_SERIALIZED; safe for a "
+                 "single-threaded caller, but concurrent oneCCL calls require MPI "
+                 "initialized with at least MPI_THREAD_SERIALIZED");
+    }
 
     try {
         world_rank = shmem_my_pe();
@@ -198,8 +216,8 @@ void oshmpi_runtime::acquire(std::size_t size, std::size_t rank) {
         CCL_THROW_IF_NOT(scratch,
                          "shmem_malloc failed for OSHMPI scratch; increase SHMEM_SYMMETRIC_SIZE");
 
-        bool local_preflight = provided >= SHMEM_THREAD_SERIALIZED && world_rank >= 0 &&
-                               world_size > 0 && size == static_cast<std::size_t>(world_size) &&
+        bool local_preflight = world_rank >= 0 && world_size > 0 &&
+                               size == static_cast<std::size_t>(world_size) &&
                                rank == static_cast<std::size_t>(world_rank);
 
         std::size_t requested_size = 0;
@@ -218,7 +236,7 @@ void oshmpi_runtime::acquire(std::size_t size, std::size_t rank) {
                      "OSHMPI initialization preflight");
         CCL_THROW_IF_NOT(scratch[scratch_preflight_result] == 1,
                          "OSHMPI initialization parameters are inconsistent or invalid; "
-                         "check rank, size, thread level, and CCL_OSHMPI_STAGING_SIZE on every PE");
+                         "check rank, size, and CCL_OSHMPI_STAGING_SIZE on every PE");
 
         scratch[scratch_staging_request] = static_cast<std::uint64_t>(requested_size);
         check_status(shmem_uint64_min_reduce(SHMEM_TEAM_WORLD,
@@ -321,6 +339,36 @@ void oshmpi_runtime::release() noexcept {
     }
 
     std::lock_guard<std::mutex> operation_lock(operation_mutex);
+
+    /* An application may finalize MPI while still holding the last oneCCL
+     * communicator - the destructor then runs afterwards, at end of scope. Every
+     * teardown call below reaches MPI through OSHMPI (shmem_free flushes and
+     * unlocks windows, shmem_finalize frees them), and calling MPI after
+     * MPI_Finalize aborts the process. The process is on its way out anyway, so
+     * drop ownership of the symmetric memory instead: leaking it at exit costs
+     * nothing, whereas aborting loses the run. */
+    int mpi_finalized = 0;
+    MPI_Finalized(&mpi_finalized);
+    if (mpi_finalized) {
+        LOG_WARN("MPI was finalized before the last OSHMPI communicator was destroyed; "
+                 "skipping OSHMPI teardown. Destroy oneCCL communicators before "
+                 "calling MPI_Finalize.");
+        pt2pt_slots = nullptr;
+        pt2pt_ack_signal = nullptr;
+        pt2pt_data_signal = nullptr;
+        pt2pt_slot_size = 0;
+        pt2pt_send_seq.clear();
+        pt2pt_recv_seq.clear();
+        staging = nullptr;
+        scratch = nullptr;
+        initialized = false;
+        finalized = true;
+        world_rank = -1;
+        world_size = 0;
+        lane_size = 0;
+        return;
+    }
+
     if (staging) {
         shmem_free(staging);
         staging = nullptr;
