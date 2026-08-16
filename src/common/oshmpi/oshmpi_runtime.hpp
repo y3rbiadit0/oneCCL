@@ -70,6 +70,8 @@ private:
 
     void check_ready() const;
     void release_pt2pt() noexcept;
+    // Undoes the pinning done at acquire(); safe to call when nothing was pinned.
+    void unpin_staging() noexcept;
     // Validates the peer and that pt2pt is configured; returns the slot base.
     char* pt2pt_slot_for(int peer) const;
     void reduce_chunk(void* destination,
@@ -86,6 +88,8 @@ private:
     int world_rank = -1;
     int world_size = 0;
     char* staging = nullptr;
+    // Whether the staging arena was pinned and so needs unregistering on teardown.
+    bool staging_pinned = false;
     // symmetric scratch for the startup agreement reductions
     std::uint64_t* scratch = nullptr;
     std::size_t lane_size = 0;

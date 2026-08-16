@@ -54,6 +54,15 @@ void copy_device_to_device(void* destination, const void* source, std::size_t by
  * collective reads a staging buffer the caller may have just written. */
 void synchronize();
 
+/* Pins a host allocation so copies between it and device memory take the DMA
+ * path instead of staging through the driver's own bounce buffer. Best effort:
+ * registration can legitimately fail - the pages may already be registered by
+ * another component, or this build may have no CUDA at all - and an unpinned
+ * arena is still correct, only slower. Returns true when the pages were pinned
+ * and must later be released with unregister_host_memory. */
+bool try_register_host_memory(void* buffer, std::size_t bytes) noexcept;
+void unregister_host_memory(void* buffer) noexcept;
+
 } // namespace oshmpi_device
 } // namespace ccl
 

@@ -93,6 +93,31 @@ void synchronize() {
     check(cudaDeviceSynchronize(), "cudaDeviceSynchronize");
 }
 
+bool try_register_host_memory(void* buffer, std::size_t bytes) noexcept {
+    if (!buffer || bytes == 0) {
+        return false;
+    }
+    const cudaError_t status = cudaHostRegister(buffer, bytes, cudaHostRegisterDefault);
+    if (status != cudaSuccess) {
+        // Clear the sticky error so the next real CUDA call is not blamed for it.
+        cudaGetLastError();
+        LOG_INFO("could not pin the OSHMPI staging arena (",
+                 cudaGetErrorString(status),
+                 "); staged copies will use the pageable path");
+        return false;
+    }
+    return true;
+}
+
+void unregister_host_memory(void* buffer) noexcept {
+    if (!buffer) {
+        return;
+    }
+    if (cudaHostUnregister(buffer) != cudaSuccess) {
+        cudaGetLastError();
+    }
+}
+
 #else // CCL_ENABLE_OSHMPI_CUDA
 
 bool enabled() noexcept {
@@ -127,6 +152,14 @@ void copy_device_to_device(void*, const void*, std::size_t) {
 void synchronize() {
     unavailable("device synchronize");
 }
+
+/* Not an error without CUDA: there are no device buffers to copy to or from, so
+ * there is nothing for pinning to accelerate. */
+bool try_register_host_memory(void*, std::size_t) noexcept {
+    return false;
+}
+
+void unregister_host_memory(void*) noexcept {}
 
 #endif // CCL_ENABLE_OSHMPI_CUDA
 

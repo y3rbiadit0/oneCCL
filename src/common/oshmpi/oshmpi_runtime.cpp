@@ -256,9 +256,16 @@ void oshmpi_runtime::acquire(std::size_t size, std::size_t rank) {
         CCL_THROW_IF_NOT(lane_size >= staging_alignment,
                          "CCL_OSHMPI_STAGING_SIZE must provide two non-empty lanes");
 
-        staging = static_cast<char*>(shmem_malloc(checked_multiply(lane_size, 2, "staging")));
+        const std::size_t staging_bytes = checked_multiply(lane_size, 2, "staging");
+        staging = static_cast<char*>(shmem_malloc(staging_bytes));
         CCL_THROW_IF_NOT(staging,
                          "shmem_malloc failed for OSHMPI staging; increase SHMEM_SYMMETRIC_SIZE");
+
+        /* Every staged collective copies the caller's device buffer through this
+         * arena and back, so both legs run at whatever rate the arena supports.
+         * shmem_malloc returns ordinary pageable memory, which measured 9.6-12
+         * GB/s on Leonardo; pinning it lets those copies use the DMA path. */
+        staging_pinned = oshmpi_device::try_register_host_memory(staging, staging_bytes);
 
         /* Point-to-point landing area. Every allocation here is collective, so it
          * happens unconditionally on every PE even in jobs that never call
@@ -304,10 +311,13 @@ void oshmpi_runtime::acquire(std::size_t size, std::size_t rank) {
                  "/",
                  world_size,
                  ", staging bytes ",
-                 lane_size * 2);
+                 lane_size * 2,
+                 ", staging pinned ",
+                 staging_pinned ? "yes" : "no");
     }
     catch (...) {
         if (staging) {
+            unpin_staging();
             shmem_free(staging);
             staging = nullptr;
         }
@@ -359,6 +369,8 @@ void oshmpi_runtime::release() noexcept {
         pt2pt_slot_size = 0;
         pt2pt_send_seq.clear();
         pt2pt_recv_seq.clear();
+        // Touches only CUDA, so it is still safe after MPI_Finalize.
+        unpin_staging();
         staging = nullptr;
         scratch = nullptr;
         initialized = false;
@@ -370,6 +382,7 @@ void oshmpi_runtime::release() noexcept {
     }
 
     if (staging) {
+        unpin_staging();
         shmem_free(staging);
         staging = nullptr;
     }
@@ -387,6 +400,13 @@ void oshmpi_runtime::release() noexcept {
     world_rank = -1;
     world_size = 0;
     lane_size = 0;
+}
+
+void oshmpi_runtime::unpin_staging() noexcept {
+    if (staging && staging_pinned) {
+        oshmpi_device::unregister_host_memory(staging);
+    }
+    staging_pinned = false;
 }
 
 void oshmpi_runtime::release_pt2pt() noexcept {
