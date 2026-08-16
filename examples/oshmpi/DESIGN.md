@@ -88,7 +88,7 @@ The expected Leonardo base stack comes from
 - [x] Add explicit errors for unsupported API operations.
 - [x] Add host correctness and lifecycle tests.
 - [x] Add Leonardo environment, build, and Slurm validation scripts.
-- [ ] Pass Phase 1 validation gates.
+- [x] Pass Phase 1 validation gates.
 - [ ] Design and implement Phase 2 CUDA/SYCL support.
 
 ## Validation Gates
@@ -205,8 +205,39 @@ step with the command and expected evidence.
   `base_thread.cpp`, and `profile.cpp`, all on glibc-only constructs
   (`RTLD_DI_ORIGIN`, `cpu_set_t`, libstdc++ `std::pair`) that are unrelated to the
   backend and fail identically with `ENABLE_MPI=ON`.
+- 2026-08-16: Gates 3 through 8 passed on Leonardo. Compilation needed two further
+  fixes for backends that are switched off in this build - `reset_group_lifecycle`
+  and `is_run_with_mpi` were both defined with call sites behind a backend guard,
+  which `-Wall -Wextra -Werror` rejects as unused. Running then needed
+  `LD_LIBRARY_PATH` for `libccl.so.1` and `liboshmpi.so`, because the project
+  builds with `CMAKE_SKIP_RPATH` and this focused artifact does not go through the
+  installed `vars.sh`.
+- 2026-08-16: the validation job had been running with a 64M staging arena, so no
+  collective ever chunked. `leonardo_env.sh` exports `CCL_OSHMPI_STAGING_SIZE=64M`
+  and is sourced first, so the sbatch's `${VAR:-128}` default could never apply.
+  The job now overrides the arena through `ONECCL_VALIDATE_STAGING_SIZE`.
+  Re-running with a real 128-byte arena gave: 2 ranks/1 node, 2 ranks/2 nodes,
+  4 ranks/1 node, and 8 ranks/2 nodes, all PASS at 32, 32, 16 and 8 byte chunks
+  respectively, with the test's `MPI_Finalized` assertion holding in every case.
 - 2026-08-15: `examples/oshmpi/patches/0001-preserve-external-mpi-ownership.patch`
   was found to be referenced by the dependency build and required by
   `FindOSHMPI.cmake`, but never committed, so the stack was not reproducible from a
   clean clone. `build_oshmpi_leonardo.sh` now fails early with regeneration
   instructions; the patch itself still has to be recovered from Leonardo.
+- 2026-08-16: the original patch was lost. Both scratch worktrees had been removed,
+  and neither `opt-src/oshmpi-main` nor `opt-src/oshmpi` carried the change; there
+  was no stash and no dangling object in the shared store. The only surviving trace
+  was the installed prefix `$HOME/opt/oshmpi-ee5cf110-oneccl`, whose generated
+  `include/shmem.h` still declares the probe and defines the macro.
+- 2026-08-16: the patch was reconstructed against pinned upstream `ee5cf110` and
+  committed. Upstream takes ownership of MPI in two places, both reproduced here:
+  `finalize_impl()` calls `MPI_Finalize()` unconditionally, and
+  `OSHMPI_initialize_thread()` calls `MPI_T_init_thread(MPI_THREAD_SINGLE, ...)`
+  ahead of `MPI_Initialized()`. The reconstruction records whether OSHMPI called
+  `MPI_Init_thread` itself and finalizes only in that case, and moves MPI_T
+  initialization after MPI's own so it requests the granted level. `initialize_mpit()`
+  runs later in the same function, so the reordering is safe. The patch is verified
+  to apply cleanly to a pristine tree and to satisfy the markers that
+  `build_oshmpi_leonardo.sh` and `FindOSHMPI.cmake` check, but it is functionally
+  equivalent rather than byte-identical to the lost original, so Gate 1 must be
+  re-run against a separate install prefix before it is trusted.

@@ -1,0 +1,110 @@
+Preserve an externally initialized MPI runtime in OSHMPI
+
+Applies to OSHMPI ee5cf110e673c098707257bb025404e17ac0a5fc.
+
+oneCCL initializes MPI itself and keeps using it after tearing the OSHMPI
+backend down, so OSHMPI must not take ownership of that runtime. Upstream does,
+in two ways:
+
+  1. finalize_impl() calls MPI_Finalize() unconditionally, killing an MPI the
+     application initialized and still owns.
+  2. OSHMPI_initialize_thread() calls MPI_T_init_thread(MPI_THREAD_SINGLE, ...)
+     before MPI_Initialized(). With HPC-X 2.19 this lowers the granted thread
+     level of an already initialized runtime to MPI_THREAD_SINGLE, silently
+     breaking a threaded application.
+
+This patch records whether OSHMPI called MPI_Init_thread itself and finalizes
+MPI only in that case, and moves MPI_T initialization after MPI's own so it can
+request the level MPI actually granted. It also exports
+oshmpi_preserves_external_mpi() and defines OSHMPI_PRESERVE_EXTERNAL_MPI, which
+oneCCL's FindOSHMPI.cmake requires so it cannot link an unpatched OSHMPI.
+
+MPI_T may be initialized before or after MPI_Init, and initialize_mpit() runs
+later in OSHMPI_initialize_thread(), so the reordering is safe.
+
+NOTE ON PROVENANCE: the original revision-2 patch was lost with its scratch
+worktree before being committed. This is a reconstruction against the pinned
+commit, written from the recovered generated header and the documented
+behaviour. It is functionally equivalent but not byte-identical to the patch
+that produced the validated 2026-08-15 build, so it must be re-validated with
+examples/oshmpi/oshmpi_mpi_ownership_smoke.cpp rather than assumed good.
+
+diff --git a/include/shmem.h.in.tpl b/include/shmem.h.in.tpl
+index 09e8a81..e785346 100644
+--- a/include/shmem.h.in.tpl
++++ b/include/shmem.h.in.tpl
+@@ -155,6 +155,13 @@ int shmem_addr_accessible(const void *addr, int pe);
+ void *shmem_ptr(const void *dest, int pe);
+ void shmem_info_get_version(int *major, int *minor);
+ void shmem_info_get_name(char *name);
++
++/* OSHMPI leaves an externally initialized MPI runtime alone: it does not
++ * finalize an MPI it did not initialize, and it does not lower the thread
++ * level MPI already granted. oshmpi_preserves_external_mpi() returns 1 when
++ * this build carries that behaviour. */
++#define OSHMPI_PRESERVE_EXTERNAL_MPI 1
++int oshmpi_preserves_external_mpi(void);
+ /* (deprecated APIs) */
+ void start_pes(int npes);
+ int _my_pe(void);
+diff --git a/src/internal/setup_impl.c b/src/internal/setup_impl.c
+index 2c0e21d..dd82691 100644
+--- a/src/internal/setup_impl.c
++++ b/src/internal/setup_impl.c
+@@ -731,6 +731,15 @@ static void initialize_mpit(void)
+     OSHMPI_DBGMSG("Initialized %d MPI_T CVAR variables\n", cnt);
+ }
+ 
++/* Set only when OSHMPI itself called MPI_Init_thread. OSHMPI must never finalize
++ * an MPI runtime that the application initialized and still owns. */
++static int oshmpi_mpi_initialized_by_oshmpi = 0;
++
++int oshmpi_preserves_external_mpi(void)
++{
++    return 1;
++}
++
+ void OSHMPI_initialize_thread(int required, int *provided)
+ {
+     int mpi_provided = 0, mpi_initialized = 0, shm_provided = 0, mpit_provided = 0;
+@@ -740,9 +749,6 @@ void OSHMPI_initialize_thread(int required, int *provided)
+ 
+     initialize_env();
+ 
+-    OSHMPI_CALLMPI(MPI_T_init_thread(MPI_THREAD_SINGLE, &mpit_provided));
+-    OSHMPI_ASSERT(mpit_provided >= MPI_THREAD_SINGLE);  /* can only be MPI internal error */
+-
+     if (required != SHMEM_THREAD_SINGLE && required != SHMEM_THREAD_FUNNELED
+         && required != SHMEM_THREAD_SERIALIZED && required != SHMEM_THREAD_MULTIPLE)
+         OSHMPI_ERR_ABORT("Unknown OpenSHMEM thread support level: %d\n", required);
+@@ -774,8 +780,16 @@ void OSHMPI_initialize_thread(int required, int *provided)
+         OSHMPI_CALLMPI(MPI_Query_thread(&mpi_provided));
+     } else {
+         OSHMPI_CALLMPI(MPI_Init_thread(NULL, NULL, shm_provided, &mpi_provided));
++        oshmpi_mpi_initialized_by_oshmpi = 1;
+     }
+ 
++    /* Initialize the MPI tool interface only after MPI itself, and ask for the
++     * thread level MPI already granted. Requesting MPI_THREAD_SINGLE here lowers
++     * the granted level of an externally initialized runtime on some MPI
++     * implementations, which would silently break a threaded application. */
++    OSHMPI_CALLMPI(MPI_T_init_thread(mpi_provided, &mpit_provided));
++    OSHMPI_ASSERT(mpit_provided >= MPI_THREAD_SINGLE);  /* can only be MPI internal error */
++
+     /* Degrade thread safety if it is not supported by MPI */
+     if (mpi_provided < shm_provided) {
+         OSHMPI_DBGMSG("The MPI library does not support the required thread support:"
+@@ -903,7 +917,12 @@ static void finalize_impl(void)
+     OSHMPI_team_destroy(&OSHMPI_global.team_world);
+ 
+     OSHMPI_CALLMPI(MPI_T_finalize());
+-    OSHMPI_CALLMPI(MPI_Finalize());
++
++    /* Leave an application-owned MPI runtime running. */
++    if (oshmpi_mpi_initialized_by_oshmpi) {
++        OSHMPI_CALLMPI(MPI_Finalize());
++        oshmpi_mpi_initialized_by_oshmpi = 0;
++    }
+ }
+ 
+ /* Implicitly called at program exit, valid only when program is initialized
