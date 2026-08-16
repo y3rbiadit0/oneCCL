@@ -131,8 +131,10 @@ comm_interface_ptr comm_selector::create_comm_impl(const size_t size,
 #endif // CCL_ENABLE_RCCL
 
 #ifdef CCL_ENABLE_OSHMPI
-    CCL_THROW_IF_NOT(ccl::global_data::env().backend != backend_mode::oshmpi,
-                     "device communicators are not supported for OSHMPI backend");
+    if (ccl::global_data::env().backend == backend_mode::oshmpi) {
+        return comm_interface_ptr(
+            ccl::oshmpi_comm::create(device, context, size, rank, std::move(kvs)));
+    }
 #endif // CCL_ENABLE_OSHMPI
 
     return comm_interface_ptr(
@@ -210,8 +212,10 @@ comm_interface_ptr comm_selector::create_comm_implExt(const size_t size,
 #endif // CCL_ENABLE_RCCL
 
 #ifdef CCL_ENABLE_OSHMPI
-    CCL_THROW_IF_NOT(ccl::global_data::env().backend != backend_mode::oshmpi,
-                     "device communicators are not supported for OSHMPI backend");
+    if (ccl::global_data::env().backend == backend_mode::oshmpi) {
+        return comm_interface_ptr(
+            ccl::oshmpi_comm::create(device, context, size, rank, std::move(kvs)));
+    }
 #endif // CCL_ENABLE_OSHMPI
 
     return comm_interface_ptr(ccl_comm::createExt(device, context, size, rank, kvs, internal_attr));

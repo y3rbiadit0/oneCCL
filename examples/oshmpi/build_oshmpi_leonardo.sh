@@ -9,7 +9,9 @@ readonly OSHMPI_PATCH_REVISION=2
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_root=$(cd -- "$script_dir/../.." && pwd)
 playground_root=${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}
-source "$playground_root/cluster/leonardo/environment.sh" cuda
+# OSHMPI must resolve the same MPI that oneCCL links. The sycl stack supplies
+# both the DPC++ compiler oneCCL needs and the OpenMPI that OSHMPI links against.
+source "$playground_root/cluster/leonardo/environment.sh" sycl
 
 base_source=${OSHMPI_BASE_SOURCE_DIR:-$HOME/opt-src/oshmpi-main}
 source_dir=${OSHMPI_SOURCE_DIR:-$SCRATCH/oshmpi-$OSHMPI_PINNED_SHORT-oneccl-patch$OSHMPI_PATCH_REVISION-src}

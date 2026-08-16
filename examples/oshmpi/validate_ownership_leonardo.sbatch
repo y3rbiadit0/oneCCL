@@ -16,7 +16,7 @@ playground_root=${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}
 install_prefix=${OSHMPI_INSTALL_PREFIX:-$HOME/opt/oshmpi-ee5cf110-oneccl}
 smoke_test="$install_prefix/tests/oshmpi_mpi_ownership_smoke"
 
-source "$playground_root/cluster/leonardo/environment.sh" cuda
+source "$playground_root/cluster/leonardo/environment.sh" sycl
 export OSHMPI_HOME="$install_prefix"
 export OSHMPI_ROOT="$install_prefix"
 export PATH="$install_prefix/bin:$PATH"

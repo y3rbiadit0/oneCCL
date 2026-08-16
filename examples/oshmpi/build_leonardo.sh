@@ -6,9 +6,13 @@ oneccl_source_dir=$(cd -- "$oneccl_script_dir/../.." && pwd)
 source "$oneccl_script_dir/leonardo_env.sh" \
     "${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}"
 
-oneccl_c_compiler=${ONECCL_C_COMPILER:-$(command -v gcc)}
-oneccl_cxx_compiler=${ONECCL_CXX_COMPILER:-$(command -v g++)}
-oneccl_build_dir=${ONECCL_BUILD_DIR:-$SCRATCH/oneccl-oshmpi-gcc}
+# oneCCL is built with DPC++ so callers can hand it SYCL queues and device
+# communicators; OSHMPI must come from the same environment so both resolve one
+# libmpi. Device buffer support is the only variable, via ONECCL_OSHMPI_CUDA.
+oneccl_c_compiler=${ONECCL_C_COMPILER:-${DPCPP_CLANG:?leonardo_env.sh must define DPCPP_CLANG}}
+oneccl_cxx_compiler=${ONECCL_CXX_COMPILER:-${DPCPP_CLANGXX:?leonardo_env.sh must define DPCPP_CLANGXX}}
+oneccl_sycl_flags=${ONECCL_SYCL_FLAGS:-${SYCL_FLAGS:?leonardo_env.sh must define SYCL_FLAGS}}
+oneccl_build_dir=${ONECCL_BUILD_DIR:-$SCRATCH/oneccl-oshmpi}
 oneccl_install_prefix=${ONECCL_INSTALL_PREFIX:-$HOME/opt/oneccl-oshmpi}
 oneccl_cache="$oneccl_build_dir/CMakeCache.txt"
 
@@ -18,6 +22,14 @@ if [[ -f "$oneccl_cache" ]]; then
     if [[ "$configured_source" != "$oneccl_source_dir" ]]; then
         printf 'error: build directory belongs to another source tree: %s\n' \
             "$configured_source" >&2
+        printf 'set ONECCL_BUILD_DIR to a fresh directory\n' >&2
+        exit 2
+    fi
+    configured_sycl=$(grep '^CCL_ENABLE_SYCL:BOOL=' "$oneccl_cache" || true)
+    configured_sycl=${configured_sycl#*=}
+    if [[ "$configured_sycl" != ON ]]; then
+        printf 'error: build directory was configured with CCL_ENABLE_SYCL=%s\n' \
+            "$configured_sycl" >&2
         printf 'set ONECCL_BUILD_DIR to a fresh directory\n' >&2
         exit 2
     fi
@@ -31,19 +43,29 @@ if [[ -f "$oneccl_cache" ]]; then
     fi
 fi
 
+oneccl_cmake_args=(
+    -DCMAKE_BUILD_TYPE=Release
+    "-DCMAKE_C_COMPILER=$oneccl_c_compiler"
+    "-DCMAKE_CXX_COMPILER=$oneccl_cxx_compiler"
+    "-DCMAKE_INSTALL_PREFIX=$oneccl_install_prefix"
+    "-DMPI_C_COMPILER=$MPI_ROOT/bin/mpicc"
+    "-DOSHMPI_ROOT=$OSHMPI_ROOT"
+    -DCCL_ENABLE_OSHMPI=ON
+    "-DCCL_ENABLE_OSHMPI_CUDA=${ONECCL_OSHMPI_CUDA:-OFF}"
+    -DCCL_ENABLE_NCCL=OFF
+    -DCCL_ENABLE_RCCL=OFF
+    -DCCL_ENABLE_ZE=OFF
+)
+
+oneccl_cmake_args+=(
+    -DCCL_ENABLE_SYCL=ON
+    -DCOMPUTE_BACKEND=dpcpp
+    "-DCMAKE_CXX_FLAGS=$oneccl_sycl_flags"
+    "-DCMAKE_CXX_FLAGS_RELEASE=$oneccl_sycl_flags -O3 -DNDEBUG"
+)
+
 cmake -S "$oneccl_source_dir" -B "$oneccl_build_dir" -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_C_COMPILER="$oneccl_c_compiler" \
-    -DCMAKE_CXX_COMPILER="$oneccl_cxx_compiler" \
-    -DCMAKE_INSTALL_PREFIX="$oneccl_install_prefix" \
-    -DMPI_C_COMPILER="$MPI_ROOT/bin/mpicc" \
-    -DOSHMPI_ROOT="$OSHMPI_ROOT" \
-    -DCCL_ENABLE_OSHMPI=ON \
-    -DCCL_ENABLE_OSHMPI_CUDA="${ONECCL_OSHMPI_CUDA:-OFF}" \
-    -DCCL_ENABLE_NCCL=OFF \
-    -DCCL_ENABLE_RCCL=OFF \
-    -DCCL_ENABLE_SYCL=OFF \
-    -DCCL_ENABLE_ZE=OFF \
+    "${oneccl_cmake_args[@]}" \
     -DENABLE_MPI=OFF \
     -DENABLE_MPI_TESTS=ON \
     -DENABLE_OMP=OFF \

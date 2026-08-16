@@ -17,9 +17,11 @@ _oneccl_oshmpi_load_leonardo_env() {
         return 2
     fi
 
-    source "$environment" cuda
+    source "$environment" sycl
 
-    : "${OSHMPI_HOME:?comm-playground CUDA environment must define OSHMPI_HOME}"
+    # Only the cuda stack exports OSHMPI_HOME; under sycl the caller points at a
+    # matching OSHMPI build itself.
+    : "${OSHMPI_HOME:?set OSHMPI_HOME to an OSHMPI built against the MPI of this stack}"
     local shmem_header="$OSHMPI_HOME/include/shmem.h"
     if [[ ! -f "$shmem_header" ]]; then
         printf 'error: patched OSHMPI header not found: %s\n' "$shmem_header" >&2
@@ -33,7 +35,7 @@ _oneccl_oshmpi_load_leonardo_env() {
 
     local mpi_cxx
     mpi_cxx=$(command -v mpicxx) || {
-        printf 'error: HPC-X mpicxx is unavailable\n' >&2
+        printf 'error: mpicxx is unavailable\n' >&2
         return 2
     }
     export MPI_CXX_COMPILER="$mpi_cxx"

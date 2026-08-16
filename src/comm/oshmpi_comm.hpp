@@ -33,6 +33,17 @@ public:
                                std::size_t rank,
                                std::shared_ptr<ccl::kvs_interface> kvs_interface);
 
+    /* Device overload. The backend does not dispatch on the device or context -
+     * buffers are classified by pointer and the collectives are the same either
+     * way - but a device communicator must report them back, and holding them
+     * keeps the caller's device and context alive for the communicator's
+     * lifetime. */
+    static oshmpi_comm* create(device_t device,
+                               context_t context,
+                               std::size_t size,
+                               std::size_t rank,
+                               std::shared_ptr<ccl::kvs_interface> kvs_interface);
+
     int rank() const override {
         return comm_rank;
     }
@@ -42,11 +53,11 @@ public:
     }
 
     device_ptr_t get_device() const override {
-        return {};
+        return device_ptr;
     }
 
     context_ptr_t get_context() const override {
-        return {};
+        return context_ptr;
     }
 
     ccl::comm_interface_ptr split(int color, int key, bool split_external_use) override {
@@ -67,7 +78,11 @@ public:
     COMM_IMPL_DECLARATION;
 
 private:
-    oshmpi_comm(std::size_t size, std::size_t rank, std::shared_ptr<ccl::kvs> kvs);
+    oshmpi_comm(std::size_t size,
+                std::size_t rank,
+                std::shared_ptr<ccl::kvs> kvs,
+                device_ptr_t device = {},
+                context_ptr_t context = {});
 
     oshmpi_comm* get_impl() {
         return this;
@@ -76,6 +91,9 @@ private:
     int comm_rank;
     int comm_size;
     std::shared_ptr<ccl::kvs> kvs;
+    // Empty for a host communicator.
+    device_ptr_t device_ptr;
+    context_ptr_t context_ptr;
 };
 
 } // namespace ccl

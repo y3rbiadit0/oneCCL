@@ -23,7 +23,7 @@ label=${PROBE_LABEL:-unlabelled}
 
 oneccl_source_dir=${ONECCL_SOURCE_DIR:?set ONECCL_SOURCE_DIR}
 playground_root=${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}
-source "$playground_root/cluster/leonardo/environment.sh" cuda
+source "$playground_root/cluster/leonardo/environment.sh" sycl
 
 cuda_root=${CUDA_ROOT:-${CUDA_HOME:-}}
 : "${cuda_root:?CUDA_ROOT is not set by the Leonardo environment}"

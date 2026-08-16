@@ -57,6 +57,31 @@ if (CCL_ENABLE_OSHMPI_CUDA)
     )
 endif()
 
+# SYCL test. Covers the device communicator, stream draining, group scope and
+# send/recv - none of which the host or device tests reach. Needs the SYCL flags
+# on the target itself, since it builds kernels of its own.
+if (CCL_ENABLE_SYCL)
+    set(sycl_test_name oshmpi_sycl_collectives_test)
+    add_executable(${sycl_test_name} ${sycl_test_name}.cpp)
+    target_compile_features(${sycl_test_name} PRIVATE cxx_std_17)
+    target_include_directories(${sycl_test_name} PRIVATE ${PROJECT_SOURCE_DIR}/include)
+    target_link_libraries(${sycl_test_name} PRIVATE ccl MPI::MPI_C OSHMPI::oshmpi rt m)
+
+    add_test(
+        NAME ${sycl_test_name}
+        COMMAND ${MPIEXEC_EXECUTABLE} -n 2 $<TARGET_FILE:${sycl_test_name}>
+    )
+    set_tests_properties(
+        ${sycl_test_name}
+        PROPERTIES
+            ENVIRONMENT "CCL_BACKEND=oshmpi;CCL_OSHMPI_STAGING_SIZE=128;SHMEM_SYMMETRIC_SIZE=128M;LD_LIBRARY_PATH=${_oshmpi_test_ld_path}"
+            LABELS "oshmpi;sycl"
+            PROCESSORS 2
+            RUN_SERIAL TRUE
+            TIMEOUT 180
+    )
+endif()
+
 add_test(
     NAME ${test_name}
     COMMAND ${MPIEXEC_EXECUTABLE} -n 2 $<TARGET_FILE:${test_name}>

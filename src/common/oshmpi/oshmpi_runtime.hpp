@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <vector>
 
 #include "oneapi/ccl/types.hpp"
 
@@ -48,6 +49,14 @@ public:
     void alltoall(const void* send_buf, void* recv_buf, std::size_t bytes_per_peer);
     void broadcast(const void* send_buf, void* recv_buf, std::size_t bytes, int root);
 
+    /* Two-sided point to point over one-sided RMA. Both calls block until the
+     * transfer is complete, which is what lets the protocol stay stop-and-wait:
+     * with blocking semantics a PE has at most one transfer in flight per peer,
+     * so a sequence number per peer pair is enough to match chunks without tags.
+     * oneCCL pt2pt carries no tag, so matching is by peer and program order. */
+    void send(const void* send_buf, std::size_t bytes, int peer);
+    void recv(void* recv_buf, std::size_t bytes, int peer);
+
     int rank() const noexcept {
         return world_rank;
     }
@@ -60,6 +69,9 @@ private:
     oshmpi_runtime() = default;
 
     void check_ready() const;
+    void release_pt2pt() noexcept;
+    // Validates the peer and that pt2pt is configured; returns the slot base.
+    char* pt2pt_slot_for(int peer) const;
     void reduce_chunk(void* destination,
                       const void* source,
                       std::size_t count,
@@ -77,6 +89,18 @@ private:
     // symmetric scratch for the startup agreement reductions
     std::uint64_t* scratch = nullptr;
     std::size_t lane_size = 0;
+
+    /* Point-to-point symmetric state. One landing slot per possible sender, so
+     * concurrent senders to the same receiver cannot collide, plus a signal per
+     * direction. Sized world_size * pt2pt_slot_size, which grows linearly with
+     * the job - CCL_OSHMPI_PT2PT_SLOT_SIZE bounds it, and 0 disables pt2pt. */
+    char* pt2pt_slots = nullptr;
+    std::uint64_t* pt2pt_data_signal = nullptr;
+    std::uint64_t* pt2pt_ack_signal = nullptr;
+    std::size_t pt2pt_slot_size = 0;
+    // Chunk counters, kept in step by matching send/recv program order.
+    std::vector<std::uint64_t> pt2pt_send_seq;
+    std::vector<std::uint64_t> pt2pt_recv_seq;
 };
 
 } // namespace ccl

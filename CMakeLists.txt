@@ -156,14 +156,15 @@ message(STATUS "MPI_INCLUDE_DIR: ${MPI_INCLUDE_DIR}")
 message(STATUS "MPI_LIB_DIR: ${MPI_LIB_DIR}")
 
 if (CCL_ENABLE_OSHMPI)
-    # The OSHMPI backend takes device buffers through the ordinary void* API and
-    # classifies them at runtime, rather than through a SYCL stream. SYCL support
-    # is a separate, later piece of work, so reject the combination rather than
-    # silently ignoring the stream a caller would reasonably expect to be honoured.
-    if (CCL_ENABLE_SYCL)
-        message(FATAL_ERROR
-                "CCL_ENABLE_OSHMPI does not yet integrate with SYCL streams; "
-                "configure with CCL_ENABLE_SYCL=OFF")
+    # With SYCL the backend accepts device communicators and drains the caller's
+    # queue before staging. Device buffers are still classified by pointer rather
+    # than taken from the SYCL device, so a CUDA-capable build is what actually
+    # enables them: warn rather than fail, since host buffers work regardless.
+    if (CCL_ENABLE_SYCL AND NOT CCL_ENABLE_OSHMPI_CUDA)
+        message(WARNING
+                "CCL_ENABLE_SYCL=ON with CCL_ENABLE_OSHMPI_CUDA=OFF: the OSHMPI "
+                "backend will accept device communicators but reject device "
+                "buffers. Set CCL_ENABLE_OSHMPI_CUDA=ON for device support.")
     endif()
     # OSHMPI supplies its own MPI transport. oneCCL's native MPI ATL targets the
     # MPICH ABI (it dlopens libmpi.so.12 and drives I_MPI_* knobs), so the two are

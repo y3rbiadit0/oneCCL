@@ -70,8 +70,16 @@ void group_impl::start() {
 #endif
 
 #ifdef CCL_ENABLE_OSHMPI
-    CCL_THROW_IF_NOT(ccl::global_data::env().backend != ::backend_mode::oshmpi,
-                     "group operations are not supported for OSHMPI backend");
+    if (ccl::global_data::env().backend == ::backend_mode::oshmpi) {
+        // OSHMPI collectives block and return an already completed event, so there
+        // is nothing to batch: running each operation as it arrives already
+        // satisfies the group contract. Track the depth so group_end() stays
+        // balanced, but leave is_group_active false - that flag drives the native
+        // deferral path in coll.cpp, which OSHMPI collectives never enter.
+        lifecycle.backend = ::backend_mode::oshmpi;
+        lifecycle.depth = 1;
+        return;
+    }
 #endif // CCL_ENABLE_OSHMPI
 
     start_native();
@@ -124,6 +132,14 @@ void group_impl::end() {
         return;
     }
 #endif
+
+#ifdef CCL_ENABLE_OSHMPI
+    if (lifecycle.backend == ::backend_mode::oshmpi) {
+        // Nothing was deferred, so there is nothing to flush.
+        reset_group_lifecycle();
+        return;
+    }
+#endif // CCL_ENABLE_OSHMPI
 
     end_native();
     // end_native() already clears is_group_active; reset_group_lifecycle() clears

@@ -136,6 +136,26 @@ void synchronize_if_device(bool any_device) {
     }
 }
 
+constexpr std::size_t default_pt2pt_slot_size = 1024UL * 1024UL;
+
+/* Bounded because the landing area is world_size * slot_size of symmetric
+ * memory: it grows linearly with the job. 0 disables point to point entirely,
+ * which keeps the memory back for jobs that only use collectives. */
+std::size_t parse_pt2pt_slot_size() {
+    const char* value = std::getenv("CCL_OSHMPI_PT2PT_SLOT_SIZE");
+    if (!value || !*value) {
+        return default_pt2pt_slot_size;
+    }
+    CCL_THROW_IF_NOT(*value != '-', "invalid CCL_OSHMPI_PT2PT_SLOT_SIZE: ", value);
+    errno = 0;
+    char* end = nullptr;
+    const unsigned long long parsed = std::strtoull(value, &end, 10);
+    CCL_THROW_IF_NOT(errno == 0 && end != value && *end == '\0',
+                     "invalid CCL_OSHMPI_PT2PT_SLOT_SIZE: ",
+                     value);
+    return static_cast<std::size_t>(parsed);
+}
+
 void check_status(int status, const char* operation) {
     CCL_THROW_IF_NOT(status == SHMEM_SUCCESS, operation, " failed with status ", status);
 }
@@ -222,6 +242,44 @@ void oshmpi_runtime::acquire(std::size_t size, std::size_t rank) {
         CCL_THROW_IF_NOT(staging,
                          "shmem_malloc failed for OSHMPI staging; increase SHMEM_SYMMETRIC_SIZE");
 
+        /* Point-to-point landing area. Every allocation here is collective, so it
+         * happens unconditionally on every PE even in jobs that never call
+         * send/recv - a later lazy allocation would hang the PEs that did not
+         * take part. The size is agreed by the same min/max check as the staging
+         * arena, since a mismatch would misalign the symmetric offsets. */
+        pt2pt_slot_size = parse_pt2pt_slot_size();
+        scratch[scratch_staging_request] = static_cast<std::uint64_t>(pt2pt_slot_size);
+        check_status(shmem_uint64_min_reduce(SHMEM_TEAM_WORLD,
+                                             &scratch[scratch_staging_min],
+                                             &scratch[scratch_staging_request],
+                                             1),
+                     "OSHMPI pt2pt slot-size minimum agreement");
+        check_status(shmem_uint64_max_reduce(SHMEM_TEAM_WORLD,
+                                             &scratch[scratch_staging_max],
+                                             &scratch[scratch_staging_request],
+                                             1),
+                     "OSHMPI pt2pt slot-size maximum agreement");
+        CCL_THROW_IF_NOT(scratch[scratch_staging_min] == scratch[scratch_staging_max],
+                         "CCL_OSHMPI_PT2PT_SLOT_SIZE must be identical on every PE");
+
+        const std::size_t peers = static_cast<std::size_t>(world_size);
+        const std::size_t signal_bytes = checked_multiply(peers, sizeof(std::uint64_t), "pt2pt signal");
+        pt2pt_data_signal = static_cast<std::uint64_t*>(shmem_calloc(peers, sizeof(std::uint64_t)));
+        pt2pt_ack_signal = static_cast<std::uint64_t*>(shmem_calloc(peers, sizeof(std::uint64_t)));
+        CCL_THROW_IF_NOT(pt2pt_data_signal && pt2pt_ack_signal,
+                         "shmem_calloc failed for OSHMPI pt2pt signals (",
+                         signal_bytes,
+                         " bytes); increase SHMEM_SYMMETRIC_SIZE");
+        if (pt2pt_slot_size > 0) {
+            pt2pt_slots = static_cast<char*>(
+                shmem_malloc(checked_multiply(peers, pt2pt_slot_size, "pt2pt slots")));
+            CCL_THROW_IF_NOT(pt2pt_slots,
+                             "shmem_malloc failed for OSHMPI pt2pt slots; increase "
+                             "SHMEM_SYMMETRIC_SIZE or lower CCL_OSHMPI_PT2PT_SLOT_SIZE");
+        }
+        pt2pt_send_seq.assign(peers, 0);
+        pt2pt_recv_seq.assign(peers, 0);
+
         users = 1;
         LOG_INFO("OSHMPI runtime initialized: rank ",
                  world_rank,
@@ -235,6 +293,7 @@ void oshmpi_runtime::acquire(std::size_t size, std::size_t rank) {
             shmem_free(staging);
             staging = nullptr;
         }
+        release_pt2pt();
         if (scratch) {
             shmem_free(scratch);
             scratch = nullptr;
@@ -266,6 +325,7 @@ void oshmpi_runtime::release() noexcept {
         shmem_free(staging);
         staging = nullptr;
     }
+    release_pt2pt();
     if (scratch) {
         shmem_free(scratch);
         scratch = nullptr;
@@ -279,6 +339,134 @@ void oshmpi_runtime::release() noexcept {
     world_rank = -1;
     world_size = 0;
     lane_size = 0;
+}
+
+void oshmpi_runtime::release_pt2pt() noexcept {
+    if (pt2pt_slots) {
+        shmem_free(pt2pt_slots);
+        pt2pt_slots = nullptr;
+    }
+    if (pt2pt_ack_signal) {
+        shmem_free(pt2pt_ack_signal);
+        pt2pt_ack_signal = nullptr;
+    }
+    if (pt2pt_data_signal) {
+        shmem_free(pt2pt_data_signal);
+        pt2pt_data_signal = nullptr;
+    }
+    pt2pt_slot_size = 0;
+    pt2pt_send_seq.clear();
+    pt2pt_recv_seq.clear();
+}
+
+char* oshmpi_runtime::pt2pt_slot_for(int peer) const {
+    CCL_THROW_IF_NOT(pt2pt_slot_size > 0 && pt2pt_slots,
+                     "OSHMPI point-to-point is disabled; set CCL_OSHMPI_PT2PT_SLOT_SIZE above 0");
+    CCL_THROW_IF_NOT(peer >= 0 && peer < world_size, "invalid OSHMPI peer: ", peer);
+    return pt2pt_slots + static_cast<std::size_t>(peer) * pt2pt_slot_size;
+}
+
+/* Stop-and-wait, one chunk at a time.
+ *
+ * OSHMPI ee5cf110 declares the OpenSHMEM 1.5 signalling API but every entry
+ * point is a stub that asserts, so shmem_putmem_signal cannot be used to publish
+ * data and its flag atomically. This uses the older idiom instead: put the data,
+ * shmem_quiet() to force it remotely complete, then put the flag. The quiet is
+ * what stops the receiver seeing a flag whose data has not landed.
+ *
+ * The sender writes a chunk into the receiver's slot reserved for it, publishes
+ * the sequence number, then blocks until the receiver acknowledges that chunk -
+ * which is what keeps the next chunk from overwriting a slot still being read.
+ * Both sides count chunks per peer, and blocking semantics keep those counters
+ * in step without needing tags.
+ *
+ * The put source may be ordinary local memory - only the destination has to be
+ * symmetric - so a host send buffer is written straight from the caller's array.
+ * A device buffer is staged through the host arena first. */
+void oshmpi_runtime::send(const void* send_buf, std::size_t bytes, int peer) {
+    std::lock_guard<std::mutex> lock(operation_mutex);
+    check_ready();
+    CCL_THROW_IF_NOT(peer != world_rank, "OSHMPI send to self is not supported");
+    // Validates peer and pt2pt configuration; the sender writes into the slot
+    // indexed by its own id, which is the one the receiver will read.
+    (void)pt2pt_slot_for(peer);
+    char* const local_slot = pt2pt_slot_for(world_rank);
+    if (bytes == 0) {
+        return;
+    }
+
+    const bool source_is_device = oshmpi_device::is_device(send_buf);
+    synchronize_if_device(source_is_device);
+
+    const char* source = static_cast<const char*>(send_buf);
+    const std::size_t max_chunk = std::min(pt2pt_slot_size, static_cast<std::size_t>(INT_MAX));
+    // The receiver derives the same chunk boundaries from the same byte count.
+    const std::size_t local_index = static_cast<std::size_t>(world_rank);
+
+    for (std::size_t offset = 0; offset < bytes;) {
+        const std::size_t chunk = std::min(bytes - offset, max_chunk);
+        const std::uint64_t sequence = ++pt2pt_send_seq[static_cast<std::size_t>(peer)];
+
+        const void* payload = source + offset;
+        if (source_is_device) {
+            oshmpi_device::copy_device_to_host(staging, source + offset, chunk);
+            payload = staging;
+        }
+
+        // slot index is the sender's own id: the receiver reads slot[peer].
+        shmem_putmem(local_slot, payload, chunk, peer);
+        // Force the data remotely complete before the flag that advertises it.
+        shmem_quiet();
+
+        std::uint64_t published = sequence;
+        shmem_putmem(&pt2pt_data_signal[local_index],
+                     &published,
+                     sizeof(published),
+                     peer);
+        shmem_quiet();
+
+        // Blocks until the receiver has copied the chunk out of its slot.
+        shmem_uint64_wait_until(&pt2pt_ack_signal[static_cast<std::size_t>(peer)],
+                                SHMEM_CMP_GE,
+                                sequence);
+        offset += chunk;
+    }
+}
+
+void oshmpi_runtime::recv(void* recv_buf, std::size_t bytes, int peer) {
+    std::lock_guard<std::mutex> lock(operation_mutex);
+    check_ready();
+    const char* slot = pt2pt_slot_for(peer);
+    CCL_THROW_IF_NOT(peer != world_rank, "OSHMPI recv from self is not supported");
+    if (bytes == 0) {
+        return;
+    }
+
+    const bool destination_is_device = oshmpi_device::is_device(recv_buf);
+    synchronize_if_device(destination_is_device);
+
+    char* destination = static_cast<char*>(recv_buf);
+    const std::size_t max_chunk = std::min(pt2pt_slot_size, static_cast<std::size_t>(INT_MAX));
+    const std::size_t local_index = static_cast<std::size_t>(world_rank);
+    const std::size_t peer_index = static_cast<std::size_t>(peer);
+
+    for (std::size_t offset = 0; offset < bytes;) {
+        const std::size_t chunk = std::min(bytes - offset, max_chunk);
+        const std::uint64_t sequence = ++pt2pt_recv_seq[peer_index];
+
+        shmem_uint64_wait_until(&pt2pt_data_signal[peer_index], SHMEM_CMP_GE, sequence);
+        stage_out(destination + offset, slot, chunk, destination_is_device);
+
+        /* Acknowledge only after the copy above has finished reading the slot,
+         * otherwise the sender may overwrite it with the next chunk. */
+        std::uint64_t acknowledged = sequence;
+        shmem_putmem(&pt2pt_ack_signal[local_index],
+                     &acknowledged,
+                     sizeof(acknowledged),
+                     peer);
+        shmem_quiet();
+        offset += chunk;
+    }
 }
 
 void oshmpi_runtime::check_ready() const {

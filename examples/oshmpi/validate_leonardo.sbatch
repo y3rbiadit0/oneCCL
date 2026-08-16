@@ -62,4 +62,18 @@ else
     printf 'device test not built; configure with CCL_ENABLE_OSHMPI_CUDA=ON to include it\n\n'
 fi
 
-exit $(( host_rc != 0 || device_rc != 0 ))
+# Present only when oneCCL was configured with CCL_ENABLE_SYCL=ON. Covers the
+# device communicator, stream draining, group scope and send/recv, none of which
+# the two tests above reach.
+sycl_binary="$oneccl_build_dir/tests/oshmpi/oshmpi_sycl_collectives_test"
+sycl_rc=0
+if [[ -x "$sycl_binary" ]]; then
+    printf -- '---- sycl device communicator, stream, group, pt2pt ----\n'
+    srun --cpu-freq=high "$sycl_binary"
+    sycl_rc=$?
+    printf 'RESULT sycl exit=%d\n\n' "$sycl_rc"
+else
+    printf 'sycl test not built; configure with CCL_ENABLE_SYCL=ON to include it\n\n'
+fi
+
+exit $(( host_rc != 0 || device_rc != 0 || sycl_rc != 0 ))

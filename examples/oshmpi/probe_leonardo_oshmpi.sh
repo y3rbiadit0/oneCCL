@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_root=$(cd -- "$script_dir/../.." && pwd)
 playground_root=${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}
-source "$playground_root/cluster/leonardo/environment.sh" cuda
+source "$playground_root/cluster/leonardo/environment.sh" sycl
 
 source_dir=${1:-${OSHMPI_SOURCE_DIR:-}}
 
