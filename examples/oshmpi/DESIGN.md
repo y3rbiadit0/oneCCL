@@ -40,7 +40,7 @@ Measured with `examples/oshmpi/probe_cuda_collectives.sbatch`, 2 PEs on one node
 | allgather  | PASS  | PASS  | `MPI_Allgather`, UCX moves device memory        |
 | alltoall   | PASS  | PASS  | `MPI_Alltoall`, same                            |
 | broadcast  | SEGV  | SEGV  | OSHMPI host `memcpy` on the root PE             |
-| allreduce  | SEGV  | SEGV  | Open MPI reduces on the host CPU                |
+| allreduce  | SEGV  | SEGV  | no accelerated coll component; host CPU reduces  |
 
 The dividing line is moving bytes versus computing on them. OSHMPI's team
 collectives forward the caller's pointers straight to MPI with no memkind
@@ -70,6 +70,30 @@ skip the Phase 1 staging arena; broadcast and allreduce need a host round trip
 unless the underlying causes are addressed. Allreduce is the collective these
 workloads care about most and is the one on the slow path, so its cost should be
 measured before committing to an implementation.
+
+#### Measured staging cost (2026-08-16, comm-playground allreduce, 1n2g)
+
+The staging round trip has now been measured against the same OSHMPI driven
+directly, which isolates it from everything else in the path:
+
+| bytes | oneCCL/OSHMPI | OSHMPI direct | delta | implied rate over 2 traversals |
+|------:|--------------:|--------------:|------:|-------------------------------:|
+|  4 MB |       1643 us |        766 us | 877 us |                       9.6 GB/s |
+| 16 MB |       8166 us |       5401 us | 2765 us |                      12.1 GB/s |
+
+Both points land at 10-12 GB/s across the device-to-host and host-to-device legs,
+which is pageable-memory rate: the arena comes from `shmem_malloc` and is never
+registered with CUDA. `cudaHostRegister` over the arena is the cheapest available
+improvement and should roughly halve the delta.
+
+For scale, NCCL through oneCCL reaches 56 GB/s on the same pair of GPUs because
+it stays on the device and rides NVLink. No host-staged design competes with that
+on a single node; the comparison that matters for this backend is multi-node,
+where NCCL also loses NVLink.
+
+Note when reading benchmark tables: the playground's `cuda_mpi` baseline tails off
+to 0.43 GB/s for the reason described above (no accelerated collective component
+for device operands), so speedups quoted against it overstate this backend.
 
 C++ note: `shmemx.h` has no `extern "C"` guard of its own and the `<shmem.h>` it
 includes closes its guard first, so the space API is name-mangled and fails to
