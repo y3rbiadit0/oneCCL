@@ -19,9 +19,10 @@ _oneccl_oshmpi_load_leonardo_env() {
 
     source "$environment" sycl
 
-    # Only the cuda stack exports OSHMPI_HOME; under sycl the caller points at a
-    # matching OSHMPI build itself.
-    : "${OSHMPI_HOME:?set OSHMPI_HOME to an OSHMPI built against the MPI of this stack}"
+    # Default to the prefix build_oshmpi_leonardo.sh installs into. The checks
+    # below still reject anything that is not a patched OSHMPI, so overriding
+    # this to a different build stays safe.
+    export OSHMPI_HOME=${OSHMPI_HOME:-$HOME/opt/oshmpi-ee5cf110-oneccl}
     local shmem_header="$OSHMPI_HOME/include/shmem.h"
     if [[ ! -f "$shmem_header" ]]; then
         printf 'error: patched OSHMPI header not found: %s\n' "$shmem_header" >&2
