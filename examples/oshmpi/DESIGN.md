@@ -28,6 +28,54 @@ Begin only after Phase 1 passes all Leonardo gates. Validate OSHMPI CUDA-space
 collectives independently before choosing direct CUDA-symmetric staging or a
 host-staged fallback. Preserve SYCL dependency and stream ordering.
 
+#### Device-memory gate results (2026-08-16, HPC-X 2.19 + CUDA 12.4)
+
+Measured with `examples/oshmpi/probe_cuda_collectives.sbatch`, 2 PEs on one node.
+`space` is CUDA symmetric memory from `shmemx_space_create(SHMEMX_MEM_CUDA)`;
+`raw` is plain `cudaMalloc`, deliberately not symmetric.
+
+| collective | space | raw   | notes                                          |
+|------------|-------|-------|------------------------------------------------|
+| barrier    | PASS  | n/a   | no operands                                    |
+| allgather  | PASS  | PASS  | `MPI_Allgather`, UCX moves device memory        |
+| alltoall   | PASS  | PASS  | `MPI_Alltoall`, same                            |
+| broadcast  | SEGV  | SEGV  | OSHMPI host `memcpy` on the root PE             |
+| allreduce  | SEGV  | SEGV  | Open MPI reduces on the host CPU                |
+
+The dividing line is moving bytes versus computing on them. OSHMPI's team
+collectives forward the caller's pointers straight to MPI with no memkind
+handling, so pure data movement inherits MPI's CUDA-awareness and works. The two
+failures have unrelated causes:
+
+- `broadcast`: `OSHMPI_broadcast_team()` finishes with `memcpy(dest, source, ...)`
+  on the root PE (`src/shmem/coll.c:66`). A host memcpy over a device pointer.
+  This is an OSHMPI defect and is independent of the MPI in use.
+- `allreduce`: OSHMPI issues a non-blocking allreduce, and Open MPI's `libnbc`
+  fallback performs the arithmetic on the host CPU in
+  `ompi_op_avx_2buff_add_float_avx2()`. This is an environment property, not an
+  OSHMPI defect: the Leonardo stack builds with HCOLL and UCC disabled, so no
+  accelerated collective component is available to handle device operands.
+  Enabling either may lift this, and that is worth testing before designing a
+  staging path for allreduce.
+
+`raw` passing for allgather and alltoall shows symmetric allocation is not
+required by this *implementation*. It is still required by the OpenSHMEM
+specification, so relying on it would tie oneCCL to OSHMPI's internals and would
+break against another OpenSHMEM or a future OSHMPI that adds address
+translation. Treat it as a measurement, not a licence.
+
+Consequence for the design: the choice is not one strategy but one per
+collective. Allgather and alltoall can pass device pointers through directly and
+skip the Phase 1 staging arena; broadcast and allreduce need a host round trip
+unless the underlying causes are addressed. Allreduce is the collective these
+workloads care about most and is the one on the slow path, so its cost should be
+measured before committing to an implementation.
+
+C++ note: `shmemx.h` has no `extern "C"` guard of its own and the `<shmem.h>` it
+includes closes its guard first, so the space API is name-mangled and fails to
+link from C++. Any oneCCL use of the space API needs the include wrapped, as in
+`examples/oshmpi/oshmpi_cuda_collectives_probe.cpp`.
+
 ## Architecture
 
 1. Add CMake discovery through `OSHMPI_ROOT`, `OSHMPI_HOME`, or

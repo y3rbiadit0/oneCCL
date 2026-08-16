@@ -39,6 +39,7 @@ cmake -S "$oneccl_source_dir" -B "$oneccl_build_dir" -G Ninja \
     -DMPI_C_COMPILER="$MPI_ROOT/bin/mpicc" \
     -DOSHMPI_ROOT="$OSHMPI_ROOT" \
     -DCCL_ENABLE_OSHMPI=ON \
+    -DCCL_ENABLE_OSHMPI_CUDA="${ONECCL_OSHMPI_CUDA:-OFF}" \
     -DCCL_ENABLE_NCCL=OFF \
     -DCCL_ENABLE_RCCL=OFF \
     -DCCL_ENABLE_SYCL=OFF \

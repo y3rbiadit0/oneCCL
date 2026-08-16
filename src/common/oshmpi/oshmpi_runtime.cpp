@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <vector>
 
 #include <shmem.h>
 
@@ -33,6 +34,7 @@
 
 #include "common/datatype/datatype.hpp"
 #include "common/log/log.hpp"
+#include "common/oshmpi/oshmpi_device.hpp"
 
 namespace ccl {
 namespace {
@@ -98,6 +100,40 @@ std::size_t parse_staging_size() {
                      "CCL_OSHMPI_STAGING_SIZE is too large: ",
                      value);
     return static_cast<std::size_t>(parsed * multiplier);
+}
+
+/* Staging copies. The arena is host symmetric memory, so a device operand needs
+ * a CUDA copy rather than memcpy. The caller classifies each buffer once and
+ * passes the answer down: cudaPointerGetAttributes is far too expensive to call
+ * per chunk, and a collective's operand cannot change location mid-loop. */
+void stage_in(void* stage, const void* source, std::size_t bytes, bool source_is_device) {
+    if (source_is_device) {
+        oshmpi_device::copy_device_to_host(stage, source, bytes);
+    }
+    else {
+        std::memcpy(stage, source, bytes);
+    }
+}
+
+void stage_out(void* destination,
+               const void* stage,
+               std::size_t bytes,
+               bool destination_is_device) {
+    if (destination_is_device) {
+        oshmpi_device::copy_host_to_device(destination, stage, bytes);
+    }
+    else {
+        std::memcpy(destination, stage, bytes);
+    }
+}
+
+/* There is no stream to order against in this phase, so work the caller queued on
+ * a non-default stream is not visible to a plain cudaMemcpy. Synchronize once per
+ * collective when a device operand is involved. */
+void synchronize_if_device(bool any_device) {
+    if (any_device) {
+        oshmpi_device::synchronize();
+    }
 }
 
 void check_status(int status, const char* operation) {
@@ -273,16 +309,21 @@ void oshmpi_runtime::allgather(const void* send_buf, void* recv_buf, std::size_t
     char* source_stage = staging;
     char* destination_stage = staging + lane_size;
 
+    const bool source_is_device = oshmpi_device::is_device(send_buf);
+    const bool destination_is_device = oshmpi_device::is_device(recv_buf);
+    synchronize_if_device(source_is_device || destination_is_device);
+
     for (std::size_t offset = 0; offset < bytes;) {
         const std::size_t chunk = std::min(bytes - offset, max_chunk);
-        std::memcpy(source_stage, source + offset, chunk);
+        stage_in(source_stage, source + offset, chunk, source_is_device);
         check_status(shmem_fcollectmem(
                          SHMEM_TEAM_WORLD, destination_stage, source_stage, chunk),
                      "shmem_fcollectmem");
         for (int peer = 0; peer < world_size; ++peer) {
-            std::memcpy(destination + static_cast<std::size_t>(peer) * bytes + offset,
-                        destination_stage + static_cast<std::size_t>(peer) * chunk,
-                        chunk);
+            stage_out(destination + static_cast<std::size_t>(peer) * bytes + offset,
+                      destination_stage + static_cast<std::size_t>(peer) * chunk,
+                      chunk,
+                      destination_is_device);
         }
         offset += chunk;
     }
@@ -308,17 +349,31 @@ void oshmpi_runtime::allgather(const void* send_buf,
     char* source_stage = staging;
     char* destination_stage = staging + lane_size;
 
+    // Each receive buffer is classified once; callers may legitimately mix host
+    // and device destinations in this overload.
+    const bool source_is_device = oshmpi_device::is_device(send_buf);
+    std::vector<char> destination_is_device(recv_bufs.size(), 0);
+    bool any_device = source_is_device;
+    for (std::size_t index = 0; index < recv_bufs.size(); ++index) {
+        const bool is_device = oshmpi_device::is_device(recv_bufs[index]);
+        destination_is_device[index] = is_device ? 1 : 0;
+        any_device = any_device || is_device;
+    }
+    synchronize_if_device(any_device);
+
     for (std::size_t offset = 0; offset < bytes;) {
         const std::size_t chunk = std::min(bytes - offset, max_chunk);
-        std::memcpy(source_stage, source + offset, chunk);
+        stage_in(source_stage, source + offset, chunk, source_is_device);
         check_status(shmem_fcollectmem(
                          SHMEM_TEAM_WORLD, destination_stage, source_stage, chunk),
                      "shmem_fcollectmem");
         for (int peer = 0; peer < world_size; ++peer) {
-            char* destination = static_cast<char*>(recv_bufs[static_cast<std::size_t>(peer)]);
-            std::memcpy(destination + offset,
-                        destination_stage + static_cast<std::size_t>(peer) * chunk,
-                        chunk);
+            const std::size_t index = static_cast<std::size_t>(peer);
+            char* destination = static_cast<char*>(recv_bufs[index]);
+            stage_out(destination + offset,
+                      destination_stage + index * chunk,
+                      chunk,
+                      destination_is_device[index] != 0);
         }
         offset += chunk;
     }
@@ -345,12 +400,19 @@ void oshmpi_runtime::allreduce(const void* send_buf,
     char* source_stage = staging;
     char* destination_stage = staging + lane_size;
 
+    const bool source_is_device = oshmpi_device::is_device(send_buf);
+    const bool destination_is_device = oshmpi_device::is_device(recv_buf);
+    synchronize_if_device(source_is_device || destination_is_device);
+
     for (std::size_t offset = 0; offset < count;) {
         const std::size_t chunk = std::min(count - offset, max_chunk);
         const std::size_t chunk_bytes = checked_multiply(chunk, datatype_size, "allreduce");
-        std::memcpy(source_stage, source + offset * datatype_size, chunk_bytes);
+        stage_in(source_stage, source + offset * datatype_size, chunk_bytes, source_is_device);
         reduce_chunk(destination_stage, source_stage, chunk, dtype, reduction);
-        std::memcpy(destination + offset * datatype_size, destination_stage, chunk_bytes);
+        stage_out(destination + offset * datatype_size,
+                  destination_stage,
+                  chunk_bytes,
+                  destination_is_device);
         offset += chunk;
     }
 }
@@ -375,20 +437,26 @@ void oshmpi_runtime::alltoall(const void* send_buf,
     char* source_stage = staging;
     char* destination_stage = staging + lane_size;
 
+    const bool source_is_device = oshmpi_device::is_device(send_buf);
+    const bool destination_is_device = oshmpi_device::is_device(recv_buf);
+    synchronize_if_device(source_is_device || destination_is_device);
+
     for (std::size_t offset = 0; offset < bytes_per_peer;) {
         const std::size_t chunk = std::min(bytes_per_peer - offset, max_chunk);
         for (int peer = 0; peer < world_size; ++peer) {
-            std::memcpy(source_stage + static_cast<std::size_t>(peer) * chunk,
-                        source + static_cast<std::size_t>(peer) * bytes_per_peer + offset,
-                        chunk);
+            stage_in(source_stage + static_cast<std::size_t>(peer) * chunk,
+                     source + static_cast<std::size_t>(peer) * bytes_per_peer + offset,
+                     chunk,
+                     source_is_device);
         }
         check_status(shmem_alltoallmem(
                          SHMEM_TEAM_WORLD, destination_stage, source_stage, chunk),
                      "shmem_alltoallmem");
         for (int peer = 0; peer < world_size; ++peer) {
-            std::memcpy(destination + static_cast<std::size_t>(peer) * bytes_per_peer + offset,
-                        destination_stage + static_cast<std::size_t>(peer) * chunk,
-                        chunk);
+            stage_out(destination + static_cast<std::size_t>(peer) * bytes_per_peer + offset,
+                      destination_stage + static_cast<std::size_t>(peer) * chunk,
+                      chunk,
+                      destination_is_device);
         }
         offset += chunk;
     }
@@ -410,17 +478,23 @@ void oshmpi_runtime::broadcast(const void* send_buf,
     char* source_stage = staging;
     char* destination_stage = staging + lane_size;
 
+    // send_buf is only read on the root, but classifying it everywhere keeps the
+    // call collective-symmetric and costs one lookup.
+    const bool source_is_device = oshmpi_device::is_device(send_buf);
+    const bool destination_is_device = oshmpi_device::is_device(recv_buf);
+    synchronize_if_device(source_is_device || destination_is_device);
+
     for (std::size_t offset = 0; offset < bytes;) {
         const std::size_t chunk =
             std::min(bytes - offset,
                      std::min(lane_size, static_cast<std::size_t>(INT_MAX)));
         if (world_rank == root) {
-            std::memcpy(source_stage, source + offset, chunk);
+            stage_in(source_stage, source + offset, chunk, source_is_device);
         }
         check_status(shmem_broadcastmem(
                          SHMEM_TEAM_WORLD, destination_stage, source_stage, chunk, root),
                      "shmem_broadcastmem");
-        std::memcpy(destination + offset, destination_stage, chunk);
+        stage_out(destination + offset, destination_stage, chunk, destination_is_device);
         offset += chunk;
     }
 }

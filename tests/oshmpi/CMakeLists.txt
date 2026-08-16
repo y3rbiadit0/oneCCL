@@ -31,6 +31,32 @@ if (NOT "$ENV{LD_LIBRARY_PATH}" STREQUAL "")
     set(_oshmpi_test_ld_path "${_oshmpi_test_ld_path}:$ENV{LD_LIBRARY_PATH}")
 endif()
 
+# Device-buffer test. Only built when the backend can classify device pointers;
+# without CCL_ENABLE_OSHMPI_CUDA the staging helpers throw by design, so the test
+# would fail for a configuration reason rather than a real defect.
+if (CCL_ENABLE_OSHMPI_CUDA)
+    set(device_test_name oshmpi_device_collectives_test)
+    add_executable(${device_test_name} ${device_test_name}.cpp)
+    target_include_directories(${device_test_name}
+        PRIVATE ${PROJECT_SOURCE_DIR}/include ${OSHMPI_CUDA_INCLUDE_DIR})
+    target_link_libraries(${device_test_name}
+        PRIVATE ccl MPI::MPI_C OSHMPI::oshmpi ${OSHMPI_CUDART_LIBRARY} rt m)
+
+    add_test(
+        NAME ${device_test_name}
+        COMMAND ${MPIEXEC_EXECUTABLE} -n 2 $<TARGET_FILE:${device_test_name}>
+    )
+    set_tests_properties(
+        ${device_test_name}
+        PROPERTIES
+            ENVIRONMENT "CCL_BACKEND=oshmpi;CCL_OSHMPI_STAGING_SIZE=128;SHMEM_SYMMETRIC_SIZE=128M;LD_LIBRARY_PATH=${_oshmpi_test_ld_path}"
+            LABELS "oshmpi;device"
+            PROCESSORS 2
+            RUN_SERIAL TRUE
+            TIMEOUT 120
+    )
+endif()
+
 add_test(
     NAME ${test_name}
     COMMAND ${MPIEXEC_EXECUTABLE} -n 2 $<TARGET_FILE:${test_name}>

@@ -139,6 +139,7 @@ endif(CCL_ENABLE_RCCL)
 
 if (CCL_ENABLE_OSHMPI)
     list (APPEND EXTENSIONS_SRC
+        common/oshmpi/oshmpi_device.cpp
         common/oshmpi/oshmpi_runtime.cpp
         oshmpi_kvs_impl.cpp
         comm/oshmpi_comm.cpp
@@ -404,6 +405,13 @@ endif()
 
 if (CCL_ENABLE_OSHMPI)
     list(APPEND SRC_LINK_LIBS OSHMPI::oshmpi)
+    if (CCL_ENABLE_OSHMPI_CUDA)
+        # Pointer classification and staging copies call into the CUDA runtime
+        # directly; OSHMPI::oshmpi only carries libcudart as a transitive
+        # dependency of its own CUDA build, which is not something to rely on.
+        list(APPEND SRC_INCLUDE_DIRS ${OSHMPI_CUDA_INCLUDE_DIR})
+        list(APPEND SRC_LINK_LIBS ${OSHMPI_CUDART_LIBRARY})
+    endif()
 endif()
 
 link_directories(${SRC_LINK_DIRS})

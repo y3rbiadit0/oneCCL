@@ -45,4 +45,21 @@ export CCL_OSHMPI_STAGING_SIZE=${ONECCL_VALIDATE_STAGING_SIZE:-128}
     exit 2
 }
 
+printf -- '---- host buffers ----\n'
 srun --cpu-freq=high "$test_binary"
+host_rc=$?
+printf 'RESULT host exit=%d\n\n' "$host_rc"
+
+# Present only when oneCCL was configured with CCL_ENABLE_OSHMPI_CUDA=ON.
+device_binary="$oneccl_build_dir/tests/oshmpi/oshmpi_device_collectives_test"
+device_rc=0
+if [[ -x "$device_binary" ]]; then
+    printf -- '---- device buffers ----\n'
+    srun --cpu-freq=high "$device_binary"
+    device_rc=$?
+    printf 'RESULT device exit=%d\n\n' "$device_rc"
+else
+    printf 'device test not built; configure with CCL_ENABLE_OSHMPI_CUDA=ON to include it\n\n'
+fi
+
+exit $(( host_rc != 0 || device_rc != 0 ))

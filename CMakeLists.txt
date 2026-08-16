@@ -78,6 +78,7 @@ option(ENABLE_LINKER_RUNPATH "Enable linker runpath flags" FALSE)
 option(ENABLE_OMP "Enable openMP extension for intra-node collectives" TRUE)
 option(ENABLE_SYCL_PER_KERNEL_COMPILE "Enable SYCL device code module assembly per kernel" TRUE)
 set(CCL_ENABLE_OSHMPI OFF CACHE BOOL "Enable OSHMPI support")
+set(CCL_ENABLE_OSHMPI_CUDA OFF CACHE BOOL "Enable CUDA device buffers in the OSHMPI backend")
 
 option(USE_CODECOV_FLAGS "Calculate code coverage" FALSE)
 option(WITH_ASAN "Use address sanitizer, can only be used in Debug build" FALSE)
@@ -114,6 +115,7 @@ message(STATUS "Enable SYCL support: ${CCL_ENABLE_SYCL}")
 message(STATUS "Enable NCCL support: ${CCL_ENABLE_NCCL}")
 message(STATUS "Enable RCCL support: ${CCL_ENABLE_RCCL}")
 message(STATUS "Enable OSHMPI support: ${CCL_ENABLE_OSHMPI}")
+message(STATUS "Enable OSHMPI CUDA device buffers: ${CCL_ENABLE_OSHMPI_CUDA}")
 message(STATUS "Enable openMP extension for intra-node collectives: ${ENABLE_OMP}")
 message(STATUS "Enable SYCL device code module assembly per kernel: ${ENABLE_SYCL_PER_KERNEL_COMPILE}")
 
@@ -154,18 +156,44 @@ message(STATUS "MPI_INCLUDE_DIR: ${MPI_INCLUDE_DIR}")
 message(STATUS "MPI_LIB_DIR: ${MPI_LIB_DIR}")
 
 if (CCL_ENABLE_OSHMPI)
-    # Phase 1 stages every collective through host symmetric memory, so device
-    # buffers are rejected at runtime. Fail here instead of at the first
-    # unsupported communicator.
+    # The OSHMPI backend takes device buffers through the ordinary void* API and
+    # classifies them at runtime, rather than through a SYCL stream. SYCL support
+    # is a separate, later piece of work, so reject the combination rather than
+    # silently ignoring the stream a caller would reasonably expect to be honoured.
     if (CCL_ENABLE_SYCL)
         message(FATAL_ERROR
-                "CCL_ENABLE_OSHMPI is host-only in Phase 1; configure with CCL_ENABLE_SYCL=OFF")
+                "CCL_ENABLE_OSHMPI does not yet integrate with SYCL streams; "
+                "configure with CCL_ENABLE_SYCL=OFF")
     endif()
     # OSHMPI supplies its own MPI transport. oneCCL's native MPI ATL targets the
     # MPICH ABI (it dlopens libmpi.so.12 and drives I_MPI_* knobs), so the two are
     # independent: ENABLE_MPI stays free to be OFF here.
     find_package(OSHMPI REQUIRED)
     add_definitions(-DCCL_ENABLE_OSHMPI)
+
+    if (CCL_ENABLE_OSHMPI_CUDA)
+        # Device buffer support needs the CUDA runtime for pointer classification
+        # and staging copies. FindOSHMPI already locates libcudart because a
+        # CUDA-enabled OSHMPI links it transitively; require it explicitly here so
+        # a misconfigured CUDA root fails at configure time rather than at link.
+        if (NOT OSHMPI_CUDART_LIBRARY)
+            message(FATAL_ERROR
+                    "CCL_ENABLE_OSHMPI_CUDA=ON but libcudart was not found; "
+                    "set CUDA_ROOT or CUDA_HOME")
+        endif()
+        find_path(OSHMPI_CUDA_INCLUDE_DIR
+            NAMES cuda_runtime.h
+            HINTS "${CUDA_ROOT}" "$ENV{CUDA_ROOT}" "${CUDA_HOME}" "$ENV{CUDA_HOME}"
+            PATH_SUFFIXES include)
+        if (NOT OSHMPI_CUDA_INCLUDE_DIR)
+            message(FATAL_ERROR
+                    "CCL_ENABLE_OSHMPI_CUDA=ON but cuda_runtime.h was not found; "
+                    "set CUDA_ROOT or CUDA_HOME")
+        endif()
+        add_definitions(-DCCL_ENABLE_OSHMPI_CUDA)
+        message(STATUS "OSHMPI CUDA include dir: ${OSHMPI_CUDA_INCLUDE_DIR}")
+        message(STATUS "OSHMPI CUDA runtime: ${OSHMPI_CUDART_LIBRARY}")
+    endif()
 endif()
 
 if ("${LIBFABRIC_DIR}" STREQUAL "")
