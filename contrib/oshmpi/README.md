@@ -20,6 +20,13 @@ The backend requires an OSHMPI build containing
 `shmem_finalize()` from finalizing MPI when the application initialized MPI
 and preserves the MPI thread level while OSHMPI initializes MPI_T.
 
+Neither behaviour can be worked around from oneCCL: the thread-level downgrade
+happens inside `shmem_init_thread`, and OSHMPI finalizes MPI from an exit handler
+even if `shmem_finalize()` is never called. Both are defects affecting any OSHMPI
+embedder, so the patch is a candidate for upstreaming - if it lands in OSHMPI, this
+directory's `patches/` and the patching step in `leonardo/build_oshmpi.sh` become
+unnecessary and the dependency reduces to a stock OSHMPI build.
+
 ## Leonardo
 
 The validated dependency pins are:

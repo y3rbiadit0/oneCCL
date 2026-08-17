@@ -79,7 +79,7 @@ cmake -S "$oneccl_source_dir" -B "$oneccl_build_dir" -G Ninja \
     -DENABLE_SYCL_INTEROP_EVENT=OFF \
     -DENABLE_OFI_HMEM=OFF \
     -DUSE_SECURITY_FLAGS=ON \
-    -DBUILD_EXAMPLES=OFF \
+    -DBUILD_EXAMPLES=${ONECCL_BUILD_EXAMPLES:-OFF} \
     -DBUILD_FT=OFF \
     -DBUILD_CONFIG=OFF
 

@@ -30,12 +30,13 @@ if (CCL_ENABLE_SYCL)
     list(APPEND oshmpi_examples oshmpi_sycl_allreduce_test.cpp)
 endif()
 
-link_directories(${EXAMPLES_LIB_DIRS})
-
+# Deliberately not EXAMPLES_INC_DIRS / EXAMPLES_LIB_DIRS: those carry the vendored
+# Intel MPI, which would be compiled against while MPI::MPI_C links another MPI.
 foreach(src ${oshmpi_examples})
     get_filename_component(executable ${src} NAME_WE)
     add_executable(${executable} ${src})
-    target_include_directories(${executable} PRIVATE ${EXAMPLES_INC_DIRS})
+    target_include_directories(${executable}
+        PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/examples/include)
     target_link_libraries(${executable} PRIVATE ccl MPI::MPI_C rt m)
     if (COMPUTE_BACKEND_TARGET_NAME)
         target_link_libraries(${executable} PRIVATE ${COMPUTE_BACKEND_TARGET_NAME})
