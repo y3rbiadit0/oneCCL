@@ -6,16 +6,34 @@ readonly OSHMPI_PINNED_OPENPA=0475704dde41054db33562a8d17314fe0e30aaf3
 readonly OSHMPI_PINNED_SHORT=ee5cf110
 readonly OSHMPI_PATCH_REVISION=2
 
-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_root=$(cd -- "$script_dir/../../.." && pwd)
-playground_root=${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}
-# OSHMPI must resolve the same MPI that oneCCL links. The sycl stack supplies
-# both the DPC++ compiler oneCCL needs and the OpenMPI that OSHMPI links against.
-source "$playground_root/cluster/leonardo/environment.sh" sycl
+# Clones, patches and builds the OSHMPI the oneCCL backend requires. This script
+# loads no modules and sources nothing: the caller supplies a prepared environment
+# through the variables below, so it works on any site rather than one.
+#
+# Required:
+#   MPI_C_COMPILER    mpicc for the MPI OSHMPI should sit on. oneCCL must later be
+#                     pointed at the same one.
+#   MPI_CXX_COMPILER  matching mpicxx
+#
+# Optional:
+#   OSHMPI_BUILD_ROOT parent for source, build and clone trees; defaults to $SCRATCH
+#   OSHMPI_CUDA_ROOT  CUDA install; enables OSHMPI's CUDA support when set
+#   OSHMPI_INSTALL_PREFIX / OSHMPI_SOURCE_DIR / OSHMPI_BUILD_DIR
+#   OSHMPI_UPSTREAM   clone URL, for mirrors or offline sites
+#   OSHMPI_BUILD_JOBS
 
-base_source=${OSHMPI_BASE_SOURCE_DIR:-$HOME/opt-src/oshmpi-main}
-source_dir=${OSHMPI_SOURCE_DIR:-$SCRATCH/oshmpi-$OSHMPI_PINNED_SHORT-oneccl-patch$OSHMPI_PATCH_REVISION-src}
-build_dir=${OSHMPI_BUILD_DIR:-$SCRATCH/oshmpi-$OSHMPI_PINNED_SHORT-oneccl-patch$OSHMPI_PATCH_REVISION-build}
+project_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+
+mpi_c_compiler=${MPI_C_COMPILER:?set to the mpicc OSHMPI should be built against}
+mpi_cxx_compiler=${MPI_CXX_COMPILER:?set to the matching mpicxx}
+
+# Everything is built on a scratch filesystem, including the clone: nothing is
+# written to the source tree or to $HOME except the final install prefix.
+build_root=${OSHMPI_BUILD_ROOT:-${SCRATCH:?set SCRATCH or OSHMPI_BUILD_ROOT to a build filesystem}}
+upstream=${OSHMPI_UPSTREAM:-https://github.com/pmodels/oshmpi.git}
+base_source=${OSHMPI_BASE_SOURCE_DIR:-$build_root/oshmpi-upstream}
+source_dir=${OSHMPI_SOURCE_DIR:-$build_root/oshmpi-$OSHMPI_PINNED_SHORT-oneccl-patch$OSHMPI_PATCH_REVISION-src}
+build_dir=${OSHMPI_BUILD_DIR:-$build_root/oshmpi-$OSHMPI_PINNED_SHORT-oneccl-patch$OSHMPI_PATCH_REVISION-build}
 install_prefix=${OSHMPI_INSTALL_PREFIX:-$HOME/opt/oshmpi-$OSHMPI_PINNED_SHORT-oneccl}
 patch_file="$project_root/contrib/oshmpi/patches/0001-preserve-external-mpi-ownership.patch"
 
@@ -36,15 +54,21 @@ if [[ ! -f "$patch_file" ]]; then
     missing_patch_message
 fi
 
+# Clone on first run. The pinned commit is fetched explicitly rather than relying
+# on whatever the default branch points at today.
 if [[ ! -d "$base_source/.git" ]]; then
-    printf 'error: base OSHMPI checkout not found: %s\n' "$base_source" >&2
-    exit 2
+    printf 'cloning OSHMPI %s into %s\n' "$OSHMPI_PINNED_SHORT" "$base_source"
+    mkdir -p "$(dirname "$base_source")"
+    git clone --quiet "$upstream" "$base_source"
 fi
 
-base_commit=$(git -C "$base_source" rev-parse HEAD)
-if [[ "$base_commit" != "$OSHMPI_PINNED_COMMIT" ]]; then
-    printf 'error: base OSHMPI checkout is at %s, expected %s\n' \
-        "$base_commit" "$OSHMPI_PINNED_COMMIT" >&2
+if ! git -C "$base_source" cat-file -e "$OSHMPI_PINNED_COMMIT^{commit}" 2>/dev/null; then
+    git -C "$base_source" fetch --quiet origin "$OSHMPI_PINNED_COMMIT" ||
+        git -C "$base_source" fetch --quiet origin
+fi
+if ! git -C "$base_source" cat-file -e "$OSHMPI_PINNED_COMMIT^{commit}" 2>/dev/null; then
+    printf 'error: pinned OSHMPI commit %s is not reachable from %s\n' \
+        "$OSHMPI_PINNED_COMMIT" "$upstream" >&2
     exit 2
 fi
 
@@ -97,6 +121,11 @@ else
     git -C "$source_dir" apply "$patch_file"
 fi
 
+cuda_configure_args=(--enable-cuda=no)
+if [[ -n "${OSHMPI_CUDA_ROOT:-}" ]]; then
+    cuda_configure_args=(--enable-cuda=yes "--with-cuda=$OSHMPI_CUDA_ROOT")
+fi
+
 mkdir -p "$build_dir"
 if [[ ! -x "$source_dir/configure" ]]; then
     (
@@ -111,10 +140,9 @@ fi
         --prefix="$install_prefix" \
         --enable-threads=multiple \
         --enable-async-thread=no \
-        --enable-cuda=yes \
-        --with-cuda="$CUDA_ROOT" \
-        CC="$(command -v mpicc)" \
-        CXX="$(command -v mpicxx)"
+        "${cuda_configure_args[@]}" \
+        CC="$mpi_c_compiler" \
+        CXX="$mpi_cxx_compiler"
 )
 
 make -C "$build_dir" -j "${OSHMPI_BUILD_JOBS:-8}"
@@ -124,7 +152,7 @@ smoke_dir="$install_prefix/tests"
 mkdir -p "$smoke_dir"
 "$install_prefix/bin/oshc++" \
     -std=c++11 \
-    -L"$CUDA_ROOT/lib64/stubs" \
+    ${OSHMPI_CUDA_ROOT:+-L"$OSHMPI_CUDA_ROOT/lib64/stubs"} \
     "$project_root/contrib/oshmpi/patches/ownership_smoke.cpp" \
     -o "$smoke_dir/ownership_smoke"
 

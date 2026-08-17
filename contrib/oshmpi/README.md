@@ -24,56 +24,67 @@ Neither behaviour can be worked around from oneCCL: the thread-level downgrade
 happens inside `shmem_init_thread`, and OSHMPI finalizes MPI from an exit handler
 even if `shmem_finalize()` is never called. Both are defects affecting any OSHMPI
 embedder, so the patch is a candidate for upstreaming - if it lands in OSHMPI, this
-directory's `patches/` and the patching step in `leonardo/build_oshmpi.sh` become
+directory's `patches/` and the patching step in `build_oshmpi.sh` become
 unnecessary and the dependency reduces to a stock OSHMPI build.
 
-## Leonardo
+## Building
 
-The validated dependency pins are:
+Both scripts load no modules and source nothing. They take a prepared environment
+through documented variables, so they work on any site rather than one. Builds are
+written to a scratch filesystem, including the OSHMPI clone; nothing lands in the
+source tree, and only the install prefixes land in `$HOME`.
+
+### 1. Patched OSHMPI
+
+```bash
+export MPI_C_COMPILER=$(command -v mpicc)
+export MPI_CXX_COMPILER=$(command -v mpicxx)
+export OSHMPI_CUDA_ROOT=$CUDA_ROOT       # optional, enables OSHMPI CUDA support
+
+./contrib/oshmpi/build_oshmpi.sh
+```
+
+Clones OSHMPI on first run, checks out the pinned revision in a detached worktree,
+applies the ownership patch, builds and installs it. The pins are:
 
 ```text
 OSHMPI ee5cf110e673c098707257bb025404e17ac0a5fc
 OpenPA 0475704dde41054db33562a8d17314fe0e30aaf3
 ```
 
-Build the pinned revision with the ownership patch:
+Override `OSHMPI_BUILD_ROOT` (defaults to `$SCRATCH`), `OSHMPI_INSTALL_PREFIX`, or
+`OSHMPI_UPSTREAM` for a mirror.
+
+### 2. oneCCL
 
 ```bash
-./contrib/oshmpi/leonardo/build_oshmpi.sh
+export ONECCL_C_COMPILER=/path/to/clang      # SYCL-capable
+export ONECCL_CXX_COMPILER=/path/to/clang++
+export ONECCL_SYCL_FLAGS="-fsycl -fsycl-targets=nvptx64-nvidia-cuda"
+export MPI_C_COMPILER=$(command -v mpicc)    # the same MPI as above
+export OSHMPI_ROOT=$HOME/opt/oshmpi-ee5cf110-oneccl
+
+./contrib/oshmpi/build_oneccl.sh
 ```
 
-This creates a clean detached worktree under `$SCRATCH`, leaves the existing
-source and install untouched, and installs to
-`$HOME/opt/oshmpi-ee5cf110-oneccl`.
+The script refuses an OSHMPI without the ownership patch. `ONECCL_BUILD_ROOT`
+defaults to `$SCRATCH`; `ONECCL_BUILD_DIR` must not contain a CMake cache from
+another source tree or compiler.
 
-Validate both MPI ownership paths:
+`ONECCL_OSHMPI_PINNED_STAGING` defaults to `ON` here and pins the staging arena
+with CUDA. Set it `OFF` to build with no CUDA at all, which is the upstream
+default - see the measurements below for what it costs.
 
-```bash
-sbatch contrib/oshmpi/leonardo/validate_ownership.sbatch
-```
+This is an OSHMPI-focused artifact: the native oneCCL MPI and stub backends are
+disabled. Note the tests are registered with ctest under the `oshmpi` label, so
+`ctest -L oshmpi` runs them wherever a launcher is available.
 
-Select the resulting install and build oneCCL:
+### Site drivers
 
-```bash
-export OSHMPI_HOME=$HOME/opt/oshmpi-ee5cf110-oneccl
-export COMM_PLAYGROUND_ROOT=$HOME/Projects/hpc-comm-playground
-./contrib/oshmpi/leonardo/build_oneccl.sh
-```
-
-The default oneCCL build directory is `$SCRATCH/oneccl-oshmpi`. oneCCL is built
-with DPC++ so callers can hand it SYCL queues and device communicators, and
-OSHMPI must come from the same environment so both resolve one `libmpi`.
-Override the compilers with `ONECCL_C_COMPILER` and `ONECCL_CXX_COMPILER`. Set
-`ONECCL_BUILD_DIR` to use another directory; it must not contain a CMake cache
-for another source tree or compiler.
-
-`ONECCL_OSHMPI_PINNED_STAGING=OFF` builds without CUDA at all, which is the
-upstream default; the Leonardo script defaults it on because it is worth ~45% of
-peak bandwidth there.
-
-This is an OSHMPI-focused oneCCL artifact: the native oneCCL MPI and stub
-backends are disabled. HPC-X MPI remains an explicit dependency of OSHMPI and
-the lifecycle/correctness tests.
+`comm-playground` has a Leonardo driver that supplies this environment and runs
+both scripts plus its own build in one step
+(`cluster/leonardo/oneccl-oshmpi/bootstrap.sh`), along with the SLURM job that
+runs the test suite. Site specifics live there rather than here.
 
 ### Why the build is configured this way
 
@@ -94,16 +105,6 @@ and `ccl_pmix::*` unconditionally while `pmix_api_wrapper.hpp` guards them, so
 `ENABLE_PMIX=OFF` does not compile. The headers are vendored in `deps/pmix`, and
 the OSHMPI runtime path never initializes the native OFI transport, so this costs
 nothing at runtime.
-
-Submit the first two-rank validation:
-
-```bash
-export ONECCL_SOURCE_DIR=$PWD
-sbatch contrib/oshmpi/leonardo/validate.sbatch
-```
-
-The same job supports topology overrides with `sbatch --nodes=...`,
-`--ntasks-per-node=...`, and `--gres=gpu:...`.
 
 ## Measurements
 

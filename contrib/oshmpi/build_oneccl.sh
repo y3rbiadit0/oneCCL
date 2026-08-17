@@ -1,21 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-oneccl_script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-oneccl_source_dir=$(cd -- "$oneccl_script_dir/../../.." && pwd)
-source "$oneccl_script_dir/env.sh" \
-    "${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}"
+# Builds oneCCL with the OSHMPI backend. This script loads no modules and sources
+# nothing: the caller supplies a prepared environment through the variables below,
+# so it works on any site rather than one.
+#
+# Required:
+#   ONECCL_C_COMPILER    SYCL-capable C compiler
+#   ONECCL_CXX_COMPILER  SYCL-capable C++ compiler
+#   ONECCL_SYCL_FLAGS    -fsycl flags naming the target, e.g.
+#                        "-fsycl -fsycl-targets=nvptx64-nvidia-cuda"
+#   MPI_C_COMPILER       the mpicc OSHMPI was built against
+#   OSHMPI_ROOT          a patched OSHMPI install (see build_oshmpi.sh)
+#
+# Optional:
+#   ONECCL_BUILD_ROOT    parent for the build tree; defaults to $SCRATCH
+#   ONECCL_BUILD_DIR / ONECCL_INSTALL_PREFIX
+#   ONECCL_OSHMPI_PINNED_STAGING  ON (default) pins the staging arena with CUDA
+#   ONECCL_BUILD_EXAMPLES / ONECCL_BUILD_JOBS
 
-# oneCCL is built with DPC++ so callers can hand it SYCL queues and device
-# communicators; OSHMPI must come from the same environment so both resolve one
-# libmpi. Device support comes from SYCL itself; ONECCL_OSHMPI_PINNED_STAGING only
-# turns on the optional CUDA pinning of the staging arena, which is worth ~45% of
-# peak bandwidth on this machine but is not required.
-oneccl_c_compiler=${ONECCL_C_COMPILER:-${DPCPP_CLANG:?leonardo/env.sh must define DPCPP_CLANG}}
-oneccl_cxx_compiler=${ONECCL_CXX_COMPILER:-${DPCPP_CLANGXX:?leonardo/env.sh must define DPCPP_CLANGXX}}
-oneccl_sycl_flags=${ONECCL_SYCL_FLAGS:-${SYCL_FLAGS:?leonardo/env.sh must define SYCL_FLAGS}}
-oneccl_build_dir=${ONECCL_BUILD_DIR:-$SCRATCH/oneccl-oshmpi}
+oneccl_source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+
+oneccl_c_compiler=${ONECCL_C_COMPILER:?set to a SYCL-capable C compiler}
+oneccl_cxx_compiler=${ONECCL_CXX_COMPILER:?set to a SYCL-capable C++ compiler}
+oneccl_sycl_flags=${ONECCL_SYCL_FLAGS:?set to the -fsycl flags for your target}
+oneccl_mpi_c_compiler=${MPI_C_COMPILER:?set to the mpicc OSHMPI was built against}
+oneccl_oshmpi_root=${OSHMPI_ROOT:?set to a patched OSHMPI install}
+
+# Builds always land on a scratch filesystem, never in the source tree or $HOME.
+oneccl_build_root=${ONECCL_BUILD_ROOT:-${SCRATCH:?set SCRATCH or ONECCL_BUILD_ROOT to a build filesystem}}
+oneccl_build_dir=${ONECCL_BUILD_DIR:-$oneccl_build_root/oneccl-oshmpi}
 oneccl_install_prefix=${ONECCL_INSTALL_PREFIX:-$HOME/opt/oneccl-oshmpi}
+
+shmem_header="$oneccl_oshmpi_root/include/shmem.h"
+if [[ ! -f "$shmem_header" ]]; then
+    printf 'error: OSHMPI header not found: %s\n' "$shmem_header" >&2
+    exit 2
+fi
+if ! grep -q '^#define OSHMPI_PRESERVE_EXTERNAL_MPI 1$' "$shmem_header"; then
+    printf 'error: OSHMPI lacks the external MPI ownership patch: %s\n' "$shmem_header" >&2
+    printf 'build it with contrib/oshmpi/build_oshmpi.sh\n' >&2
+    exit 2
+fi
 oneccl_cache="$oneccl_build_dir/CMakeCache.txt"
 
 if [[ -f "$oneccl_cache" ]]; then
@@ -50,8 +76,8 @@ oneccl_cmake_args=(
     "-DCMAKE_C_COMPILER=$oneccl_c_compiler"
     "-DCMAKE_CXX_COMPILER=$oneccl_cxx_compiler"
     "-DCMAKE_INSTALL_PREFIX=$oneccl_install_prefix"
-    "-DMPI_C_COMPILER=$MPI_ROOT/bin/mpicc"
-    "-DOSHMPI_ROOT=$OSHMPI_ROOT"
+    "-DMPI_C_COMPILER=$oneccl_mpi_c_compiler"
+    "-DOSHMPI_ROOT=$oneccl_oshmpi_root"
     -DCCL_ENABLE_OSHMPI=ON
     "-DCCL_ENABLE_OSHMPI_PINNED_STAGING=${ONECCL_OSHMPI_PINNED_STAGING:-ON}"
     -DCCL_ENABLE_NCCL=OFF
