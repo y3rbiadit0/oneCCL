@@ -21,6 +21,7 @@
 
 #include "oneapi/ccl/api_functions.hpp"
 #include "common/datatype/datatype.hpp"
+#include "common/oshmpi/oshmpi_device.hpp"
 #include "common/oshmpi/oshmpi_runtime.hpp"
 // ccl::stream::impl_value_t is a shared_ptr to ccl_stream, which the public
 // headers only forward declare. wait_stream() calls through it, so the full
@@ -37,12 +38,11 @@ void wait_dependencies(const ccl::vector_class<ccl::event>& deps) {
     }
 }
 
-/* The collectives are blocking and stage through host memory on the default CUDA
- * stream, so anything the caller queued on its own stream is not otherwise
- * ordered against them. Draining the queue first is what makes a device operand
- * safe to read. This is a correctness requirement, not a tuning choice: without
- * it the backend can stage a buffer the caller's kernel has not finished
- * writing. */
+/* The collectives are blocking and stage through host memory, so anything the
+ * caller queued on its own stream is not otherwise ordered against them. Draining
+ * the queue first is what makes a device operand safe to read. This is a
+ * correctness requirement, not a tuning choice: without it the backend can stage a
+ * buffer the caller's kernel has not finished writing. */
 void wait_stream(const ccl::stream::impl_value_t& stream) {
 #ifdef CCL_ENABLE_SYCL
     if (stream && stream->is_sycl_device_stream()) {
@@ -78,6 +78,33 @@ void enter_collective(const ccl::stream::impl_value_t& stream,
     wait_dependencies(deps);
     wait_stream(stream);
     validate_attributes(attr);
+}
+
+/* Builds what the runtime needs in order to touch device memory. The queue comes
+ * from the caller's stream and the context from that same queue, so classification
+ * and copying always agree about which context owns an allocation.
+ *
+ * A device communicator used without a stream still yields a context, which is
+ * deliberate: the runtime can then recognise a device operand and report it as an
+ * error instead of memcpy'ing device memory on the host. A host communicator
+ * yields the default accessor, under which every buffer is host memory. */
+oshmpi_device::accessor make_accessor(const ccl::stream::impl_value_t& stream,
+                                      const std::shared_ptr<ccl::context>& context) {
+#ifdef CCL_ENABLE_SYCL
+    if (stream && stream->is_sycl_device_stream()) {
+        // get_native_stream() returns by value; sycl::queue is a reference-counted
+        // handle, so the copy still refers to the caller's queue.
+        sycl::queue queue = stream->get_native_stream();
+        return oshmpi_device::accessor(queue.get_context(), queue);
+    }
+    if (context) {
+        return oshmpi_device::accessor(context->get_native());
+    }
+#else // CCL_ENABLE_SYCL
+    (void)stream;
+    (void)context;
+#endif // CCL_ENABLE_SYCL
+    return oshmpi_device::accessor{};
 }
 
 std::size_t checked_bytes(std::size_t count, ccl::datatype dtype) {
@@ -177,7 +204,7 @@ ccl::event oshmpi_comm::allgather_impl(const void* send_buf,
     const std::size_t bytes = checked_bytes(count, dtype);
     validate_buffer(send_buf, bytes, "allgather send buffer");
     validate_buffer(recv_buf, bytes, "allgather receive buffer");
-    oshmpi_runtime::instance().allgather(send_buf, recv_buf, bytes);
+    oshmpi_runtime::instance().allgather(send_buf, recv_buf, bytes, make_accessor(stream, context_ptr));
     return ccl::event{};
 }
 
@@ -194,7 +221,7 @@ ccl::event oshmpi_comm::allgather_impl(const void* send_buf,
     for (const auto* buffer : recv_bufs) {
         validate_buffer(buffer, bytes, "allgather receive buffer");
     }
-    oshmpi_runtime::instance().allgather(send_buf, recv_bufs, bytes);
+    oshmpi_runtime::instance().allgather(send_buf, recv_bufs, bytes, make_accessor(stream, context_ptr));
     return ccl::event{};
 }
 
@@ -216,7 +243,8 @@ ccl::event oshmpi_comm::allreduce_impl(const void* send_buf,
                          reduction == ccl::reduction::min || reduction == ccl::reduction::max,
                      "unsupported OSHMPI allreduce reduction: ",
                      static_cast<int>(reduction));
-    oshmpi_runtime::instance().allreduce(send_buf, recv_buf, count, dtype, reduction);
+    oshmpi_runtime::instance().allreduce(
+        send_buf, recv_buf, count, dtype, reduction, make_accessor(stream, context_ptr));
     return ccl::event{};
 }
 
@@ -231,7 +259,7 @@ ccl::event oshmpi_comm::alltoall_impl(const void* send_buf,
     const std::size_t bytes = checked_bytes(count, dtype);
     validate_buffer(send_buf, bytes, "alltoall send buffer");
     validate_buffer(recv_buf, bytes, "alltoall receive buffer");
-    oshmpi_runtime::instance().alltoall(send_buf, recv_buf, bytes);
+    oshmpi_runtime::instance().alltoall(send_buf, recv_buf, bytes, make_accessor(stream, context_ptr));
     return ccl::event{};
 }
 
@@ -245,7 +273,7 @@ ccl::event oshmpi_comm::broadcast_impl(void* buf,
     enter_collective(stream, attr, deps);
     const std::size_t bytes = checked_bytes(count, dtype);
     validate_buffer(buf, bytes, "broadcast buffer");
-    oshmpi_runtime::instance().broadcast(buf, buf, bytes, root);
+    oshmpi_runtime::instance().broadcast(buf, buf, bytes, root, make_accessor(stream, context_ptr));
     return ccl::event{};
 }
 
@@ -263,7 +291,8 @@ ccl::event oshmpi_comm::broadcast_impl(void* send_buf,
         validate_buffer(send_buf, bytes, "broadcast send buffer");
     }
     validate_buffer(recv_buf, bytes, "broadcast receive buffer");
-    oshmpi_runtime::instance().broadcast(send_buf, recv_buf, bytes, root);
+    oshmpi_runtime::instance().broadcast(
+        send_buf, recv_buf, bytes, root, make_accessor(stream, context_ptr));
     return ccl::event{};
 }
 
@@ -278,7 +307,7 @@ ccl::event oshmpi_comm::send_impl(void* send_buf,
     const std::size_t bytes = checked_bytes(send_count, dtype);
     validate_buffer(send_buf, bytes, "send buffer");
     CCL_THROW_IF_NOT(peer >= 0 && peer < comm_size, "invalid send peer: ", peer);
-    oshmpi_runtime::instance().send(send_buf, bytes, peer);
+    oshmpi_runtime::instance().send(send_buf, bytes, peer, make_accessor(stream, context_ptr));
     return ccl::event{};
 }
 
@@ -293,7 +322,7 @@ ccl::event oshmpi_comm::recv_impl(void* recv_buf,
     const std::size_t bytes = checked_bytes(recv_count, dtype);
     validate_buffer(recv_buf, bytes, "receive buffer");
     CCL_THROW_IF_NOT(peer >= 0 && peer < comm_size, "invalid recv peer: ", peer);
-    oshmpi_runtime::instance().recv(recv_buf, bytes, peer);
+    oshmpi_runtime::instance().recv(recv_buf, bytes, peer, make_accessor(stream, context_ptr));
     return ccl::event{};
 }
 

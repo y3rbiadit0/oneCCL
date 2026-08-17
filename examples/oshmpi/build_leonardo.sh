@@ -8,7 +8,9 @@ source "$oneccl_script_dir/leonardo_env.sh" \
 
 # oneCCL is built with DPC++ so callers can hand it SYCL queues and device
 # communicators; OSHMPI must come from the same environment so both resolve one
-# libmpi. Device buffer support is the only variable, via ONECCL_OSHMPI_CUDA.
+# libmpi. Device support comes from SYCL itself; ONECCL_OSHMPI_PINNED_STAGING only
+# turns on the optional CUDA pinning of the staging arena, which is worth ~45% of
+# peak bandwidth on this machine but is not required.
 oneccl_c_compiler=${ONECCL_C_COMPILER:-${DPCPP_CLANG:?leonardo_env.sh must define DPCPP_CLANG}}
 oneccl_cxx_compiler=${ONECCL_CXX_COMPILER:-${DPCPP_CLANGXX:?leonardo_env.sh must define DPCPP_CLANGXX}}
 oneccl_sycl_flags=${ONECCL_SYCL_FLAGS:-${SYCL_FLAGS:?leonardo_env.sh must define SYCL_FLAGS}}
@@ -51,7 +53,7 @@ oneccl_cmake_args=(
     "-DMPI_C_COMPILER=$MPI_ROOT/bin/mpicc"
     "-DOSHMPI_ROOT=$OSHMPI_ROOT"
     -DCCL_ENABLE_OSHMPI=ON
-    "-DCCL_ENABLE_OSHMPI_CUDA=${ONECCL_OSHMPI_CUDA:-OFF}"
+    "-DCCL_ENABLE_OSHMPI_PINNED_STAGING=${ONECCL_OSHMPI_PINNED_STAGING:-ON}"
     -DCCL_ENABLE_NCCL=OFF
     -DCCL_ENABLE_RCCL=OFF
     -DCCL_ENABLE_ZE=OFF

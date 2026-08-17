@@ -78,7 +78,7 @@ option(ENABLE_LINKER_RUNPATH "Enable linker runpath flags" FALSE)
 option(ENABLE_OMP "Enable openMP extension for intra-node collectives" TRUE)
 option(ENABLE_SYCL_PER_KERNEL_COMPILE "Enable SYCL device code module assembly per kernel" TRUE)
 set(CCL_ENABLE_OSHMPI OFF CACHE BOOL "Enable OSHMPI support")
-set(CCL_ENABLE_OSHMPI_CUDA OFF CACHE BOOL "Enable CUDA device buffers in the OSHMPI backend")
+set(CCL_ENABLE_OSHMPI_PINNED_STAGING OFF CACHE BOOL "Pin the OSHMPI staging arena with CUDA (optional, NVIDIA only)")
 
 option(USE_CODECOV_FLAGS "Calculate code coverage" FALSE)
 option(WITH_ASAN "Use address sanitizer, can only be used in Debug build" FALSE)
@@ -115,7 +115,7 @@ message(STATUS "Enable SYCL support: ${CCL_ENABLE_SYCL}")
 message(STATUS "Enable NCCL support: ${CCL_ENABLE_NCCL}")
 message(STATUS "Enable RCCL support: ${CCL_ENABLE_RCCL}")
 message(STATUS "Enable OSHMPI support: ${CCL_ENABLE_OSHMPI}")
-message(STATUS "Enable OSHMPI CUDA device buffers: ${CCL_ENABLE_OSHMPI_CUDA}")
+message(STATUS "Enable OSHMPI pinned staging (CUDA, optional): ${CCL_ENABLE_OSHMPI_PINNED_STAGING}")
 message(STATUS "Enable openMP extension for intra-node collectives: ${ENABLE_OMP}")
 message(STATUS "Enable SYCL device code module assembly per kernel: ${ENABLE_SYCL_PER_KERNEL_COMPILE}")
 
@@ -156,15 +156,13 @@ message(STATUS "MPI_INCLUDE_DIR: ${MPI_INCLUDE_DIR}")
 message(STATUS "MPI_LIB_DIR: ${MPI_LIB_DIR}")
 
 if (CCL_ENABLE_OSHMPI)
-    # With SYCL the backend accepts device communicators and drains the caller's
-    # queue before staging. Device buffers are still classified by pointer rather
-    # than taken from the SYCL device, so a CUDA-capable build is what actually
-    # enables them: warn rather than fail, since host buffers work regardless.
-    if (CCL_ENABLE_SYCL AND NOT CCL_ENABLE_OSHMPI_CUDA)
-        message(WARNING
-                "CCL_ENABLE_SYCL=ON with CCL_ENABLE_OSHMPI_CUDA=OFF: the OSHMPI "
-                "backend will accept device communicators but reject device "
-                "buffers. Set CCL_ENABLE_OSHMPI_CUDA=ON for device support.")
+    # Device support comes from SYCL: pointers are classified with
+    # sycl::get_pointer_type and staged with queue copies, so the backend works on
+    # any target the SYCL implementation supports. Without SYCL the backend is
+    # host-only, which is a valid configuration rather than an error.
+    if (NOT CCL_ENABLE_SYCL)
+        message(STATUS
+                "OSHMPI backend is host-only: device buffers need CCL_ENABLE_SYCL=ON")
     endif()
     # OSHMPI supplies its own MPI transport. oneCCL's native MPI ATL targets the
     # MPICH ABI (it dlopens libmpi.so.12 and drives I_MPI_* knobs), so the two are
@@ -172,15 +170,18 @@ if (CCL_ENABLE_OSHMPI)
     find_package(OSHMPI REQUIRED)
     add_definitions(-DCCL_ENABLE_OSHMPI)
 
-    if (CCL_ENABLE_OSHMPI_CUDA)
-        # Device buffer support needs the CUDA runtime for pointer classification
-        # and staging copies. FindOSHMPI already locates libcudart because a
+    if (CCL_ENABLE_OSHMPI_PINNED_STAGING)
+        # Optional accelerator, not a dependency: page-locking the staging arena
+        # skips the driver's bounce buffer on staged copies, worth ~45% of peak
+        # bandwidth on NVIDIA hardware. There is no portable equivalent (see
+        # oshmpi_device.hpp), so this is the one place CUDA enters the backend and
+        # it is off by default. FindOSHMPI already locates libcudart because a
         # CUDA-enabled OSHMPI links it transitively; require it explicitly here so
         # a misconfigured CUDA root fails at configure time rather than at link.
         if (NOT OSHMPI_CUDART_LIBRARY)
             message(FATAL_ERROR
-                    "CCL_ENABLE_OSHMPI_CUDA=ON but libcudart was not found; "
-                    "set CUDA_ROOT or CUDA_HOME")
+                    "CCL_ENABLE_OSHMPI_PINNED_STAGING=ON but libcudart was not "
+                    "found; set CUDA_ROOT or CUDA_HOME, or leave the option OFF")
         endif()
         find_path(OSHMPI_CUDA_INCLUDE_DIR
             NAMES cuda_runtime.h
@@ -188,12 +189,19 @@ if (CCL_ENABLE_OSHMPI)
             PATH_SUFFIXES include)
         if (NOT OSHMPI_CUDA_INCLUDE_DIR)
             message(FATAL_ERROR
-                    "CCL_ENABLE_OSHMPI_CUDA=ON but cuda_runtime.h was not found; "
-                    "set CUDA_ROOT or CUDA_HOME")
+                    "CCL_ENABLE_OSHMPI_PINNED_STAGING=ON but cuda_runtime.h was "
+                    "not found; set CUDA_ROOT or CUDA_HOME, or leave the option OFF")
         endif()
-        add_definitions(-DCCL_ENABLE_OSHMPI_CUDA)
+        add_definitions(-DCCL_ENABLE_OSHMPI_PINNED_STAGING)
         message(STATUS "OSHMPI CUDA include dir: ${OSHMPI_CUDA_INCLUDE_DIR}")
         message(STATUS "OSHMPI CUDA runtime: ${OSHMPI_CUDART_LIBRARY}")
+    elseif (OSHMPI_CUDART_LIBRARY)
+        # The option stays off by default like every other CCL_ENABLE_* backend
+        # switch, so say it exists rather than leaving it to be discovered.
+        message(STATUS
+                "OSHMPI: libcudart found; -DCCL_ENABLE_OSHMPI_PINNED_STAGING=ON "
+                "pins the staging arena (~45% higher peak bandwidth on NVIDIA "
+                "hardware). Not required - the backend is complete without it.")
     endif()
 endif()
 

@@ -82,9 +82,14 @@ directly, which isolates it from everything else in the path:
 | 16 MB |       8166 us |       5401 us | 2765 us |                      12.1 GB/s |
 
 Both points land at 10-12 GB/s across the device-to-host and host-to-device legs,
-which is pageable-memory rate: the arena comes from `shmem_malloc` and is never
-registered with CUDA. `cudaHostRegister` over the arena is the cheapest available
-improvement and should roughly halve the delta.
+which is pageable-memory rate: the arena comes from `shmem_malloc`, which returns
+ordinary host memory.
+
+Page-locking it with `cudaHostRegister` was tried and did roughly halve the delta
+(peak 2.55 -> 4.10 GB/s). It was then removed when the device layer moved to SYCL,
+because it was the only remaining CUDA dependency - see below. These figures are
+therefore the historical record of what staging cost before either change, not the
+current numbers.
 
 For scale, NCCL through oneCCL reaches 56 GB/s on the same pair of GPUs because
 it stays on the device and rides NVLink. No host-staged design competes with that
@@ -94,6 +99,59 @@ where NCCL also loses NVLink.
 Note when reading benchmark tables: the playground's `cuda_mpi` baseline tails off
 to 0.43 GB/s for the reason described above (no accelerated collective component
 for device operands), so speedups quoted against it overstate this backend.
+
+#### Device layer: SYCL, not CUDA
+
+The device path was originally written against the CUDA runtime. It is now SYCL,
+so the backend runs wherever the SYCL implementation targets rather than only on
+NVIDIA hardware - which matters for a backend offered to an Intel project.
+
+| operation | CUDA (was) | SYCL (now) |
+|-----------|------------|------------|
+| classify a pointer | `cudaPointerGetAttributes` | `sycl::get_pointer_type(ptr, context)` |
+| stage device<->host | `cudaMemcpy` | `queue.memcpy(...).wait()` |
+| drain prior work | `cudaDeviceSynchronize` | `queue.wait()` |
+| pin the arena | `cudaHostRegister` | *no equivalent - optional* |
+
+The first three map directly. Pinning has no counterpart: SYCLomatic's `DPCT1027`
+lists `cuMemHostRegister` among the calls it replaces with `0` for want of a SYCL
+API, and `sycl::malloc_host` cannot help because the arena must come from
+`shmem_malloc` to be symmetric. It is therefore optional and off by default
+(`CCL_ENABLE_OSHMPI_PINNED_STAGING`) - the backend builds, runs and is complete
+with no CUDA linked at all.
+
+#### Why both, and what each is worth
+
+Both configurations were measured on 1n2g allreduce, which separates the two
+effects cleanly. Peak bandwidth, GB/s:
+
+|                | unpinned | pinned |
+|----------------|---------:|-------:|
+| CUDA layer     |    2.553 |  4.101 |
+| SYCL layer     |    2.546 |  3.694 |
+
+Two independent findings:
+
+- **The SYCL layer is free.** Unpinned, 2.546 against 2.553 - within noise. The
+  portability rewrite costs nothing.
+- **Pinning is worth 45-60%**, and the SYCL copy path does honour a
+  `cudaHostRegister`ed pointer. The prediction that it would not - that SYCL would
+  ignore a registration made behind its back - was wrong, and removing pinning on
+  that assumption cost 31% of peak until it was measured and restored.
+
+The ~10% gap between the two pinned figures is per-call overhead in the accessor
+(built per collective, copying a queue handle and taking a context, plus two
+`get_pointer_type` lookups). It only shows up once the copy is fast enough for
+fixed costs to matter, which is why the unpinned column shows no difference.
+
+Both SYCL calls need state the runtime does not own: classification needs a
+context and copying needs a queue. They arrive as an `oshmpi_device::accessor`
+threaded through every operand-carrying runtime entry point. `oshmpi_comm` builds
+it from the caller's stream, falling back to the communicator's own context when
+no stream is given - a device operand discovered without a queue is then reported
+as an error rather than silently memcpy'd on the host. A host communicator passes
+a default-constructed accessor, under which every buffer is host memory and the
+staging path is byte-for-byte what it was before device support existed.
 
 C++ note: `shmemx.h` has no `extern "C"` guard of its own and the `<shmem.h>` it
 includes closes its guard first, so the space API is name-mangled and fails to

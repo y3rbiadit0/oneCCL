@@ -20,78 +20,109 @@
 #include "oneapi/ccl.hpp"
 #include "common/log/log.hpp"
 
-#ifdef CCL_ENABLE_OSHMPI_CUDA
+#ifdef CCL_ENABLE_OSHMPI_PINNED_STAGING
 #include <cuda_runtime.h>
-#endif // CCL_ENABLE_OSHMPI_CUDA
+#endif // CCL_ENABLE_OSHMPI_PINNED_STAGING
 
 namespace ccl {
 namespace oshmpi_device {
 
-#ifdef CCL_ENABLE_OSHMPI_CUDA
+#ifdef CCL_ENABLE_SYCL
+
+bool accessor::enabled() const noexcept {
+    return sycl_context.has_value();
+}
+
+location accessor::classify(const void* buffer) const noexcept {
+    if (!buffer || !sycl_context) {
+        return location::host;
+    }
+
+    /* get_pointer_type reports `unknown` for allocations it does not own, but a
+     * foreign context can still make the runtime throw. Any failure means "not
+     * device memory as far as this context is concerned", which is the safe
+     * answer: it routes the buffer down the host path. */
+    try {
+        switch (sycl::get_pointer_type(buffer, *sycl_context)) {
+            /* Shared USM is reachable from the host, so a plain memcpy would also
+             * be correct - but it is device-resident often enough that letting the
+             * runtime move it is the better default. */
+            case sycl::usm::alloc::device:
+            case sycl::usm::alloc::shared: return location::device;
+            case sycl::usm::alloc::host: return location::host;
+            default: return location::unknown;
+        }
+    }
+    catch (...) {
+        return location::unknown;
+    }
+}
+
+void accessor::copy_device_to_host(void* destination,
+                                   const void* source,
+                                   std::size_t bytes) const {
+    if (bytes == 0) {
+        return;
+    }
+    CCL_THROW_IF_NOT(sycl_queue,
+                     "a device buffer was passed without a stream; device operands "
+                     "require a ccl::stream so the backend has a queue to copy with");
+    sycl_queue->memcpy(destination, source, bytes).wait();
+}
+
+void accessor::copy_host_to_device(void* destination,
+                                   const void* source,
+                                   std::size_t bytes) const {
+    if (bytes == 0) {
+        return;
+    }
+    CCL_THROW_IF_NOT(sycl_queue,
+                     "a device buffer was passed without a stream; device operands "
+                     "require a ccl::stream so the backend has a queue to copy with");
+    sycl_queue->memcpy(destination, source, bytes).wait();
+}
+
+void accessor::synchronize() const {
+    if (sycl_queue) {
+        sycl_queue->wait();
+    }
+}
+
+#else // CCL_ENABLE_SYCL
+
+/* Without SYCL there is no way to recognise or reach device memory, so every
+ * buffer is host memory and the copy helpers are unreachable by construction. */
+
+bool accessor::enabled() const noexcept {
+    return false;
+}
+
+location accessor::classify(const void*) const noexcept {
+    return location::host;
+}
 
 namespace {
 
-void check(cudaError_t status, const char* operation) {
-    CCL_THROW_IF_NOT(status == cudaSuccess,
-                     operation,
-                     " failed: ",
-                     cudaGetErrorString(status));
+[[noreturn]] void unavailable(const char* operation) {
+    CCL_THROW(operation,
+              " requires a SYCL-enabled build; rebuild oneCCL with CCL_ENABLE_SYCL=ON");
 }
 
 } // namespace
 
-bool enabled() noexcept {
-    return true;
+void accessor::copy_device_to_host(void*, const void*, std::size_t) const {
+    unavailable("device to host copy");
 }
 
-location classify(const void* buffer) noexcept {
-    if (!buffer) {
-        return location::host;
-    }
-
-    cudaPointerAttributes attributes{};
-    const cudaError_t status = cudaPointerGetAttributes(&attributes, buffer);
-    if (status != cudaSuccess) {
-        // An unregistered host allocation reports an error on older CUDA
-        // versions. Clear the sticky error so the next real CUDA call is not
-        // blamed for it, and treat the buffer as host memory.
-        cudaGetLastError();
-        return location::unknown;
-    }
-
-    switch (attributes.type) {
-        case cudaMemoryTypeDevice:
-        case cudaMemoryTypeManaged: return location::device;
-        case cudaMemoryTypeHost:
-        case cudaMemoryTypeUnregistered: return location::host;
-        default: return location::unknown;
-    }
+void accessor::copy_host_to_device(void*, const void*, std::size_t) const {
+    unavailable("host to device copy");
 }
 
-void copy_device_to_host(void* destination, const void* source, std::size_t bytes) {
-    if (bytes == 0) {
-        return;
-    }
-    check(cudaMemcpy(destination, source, bytes, cudaMemcpyDeviceToHost), "cudaMemcpy D2H");
-}
+void accessor::synchronize() const {}
 
-void copy_host_to_device(void* destination, const void* source, std::size_t bytes) {
-    if (bytes == 0) {
-        return;
-    }
-    check(cudaMemcpy(destination, source, bytes, cudaMemcpyHostToDevice), "cudaMemcpy H2D");
-}
+#endif // CCL_ENABLE_SYCL
 
-void copy_device_to_device(void* destination, const void* source, std::size_t bytes) {
-    if (bytes == 0) {
-        return;
-    }
-    check(cudaMemcpy(destination, source, bytes, cudaMemcpyDeviceToDevice), "cudaMemcpy D2D");
-}
-
-void synchronize() {
-    check(cudaDeviceSynchronize(), "cudaDeviceSynchronize");
-}
+#ifdef CCL_ENABLE_OSHMPI_PINNED_STAGING
 
 bool try_register_host_memory(void* buffer, std::size_t bytes) noexcept {
     if (!buffer || bytes == 0) {
@@ -118,50 +149,17 @@ void unregister_host_memory(void* buffer) noexcept {
     }
 }
 
-#else // CCL_ENABLE_OSHMPI_CUDA
+#else // CCL_ENABLE_OSHMPI_PINNED_STAGING
 
-bool enabled() noexcept {
-    return false;
-}
+/* Not an error: the arena works unregistered, and this is the default build. */
 
-location classify(const void*) noexcept {
-    return location::host;
-}
-
-namespace {
-
-[[noreturn]] void unavailable(const char* operation) {
-    CCL_THROW(operation,
-              " requires a CUDA-enabled OSHMPI backend; rebuild with CCL_ENABLE_OSHMPI_CUDA=ON");
-}
-
-} // namespace
-
-void copy_device_to_host(void*, const void*, std::size_t) {
-    unavailable("device to host copy");
-}
-
-void copy_host_to_device(void*, const void*, std::size_t) {
-    unavailable("host to device copy");
-}
-
-void copy_device_to_device(void*, const void*, std::size_t) {
-    unavailable("device to device copy");
-}
-
-void synchronize() {
-    unavailable("device synchronize");
-}
-
-/* Not an error without CUDA: there are no device buffers to copy to or from, so
- * there is nothing for pinning to accelerate. */
 bool try_register_host_memory(void*, std::size_t) noexcept {
     return false;
 }
 
 void unregister_host_memory(void*) noexcept {}
 
-#endif // CCL_ENABLE_OSHMPI_CUDA
+#endif // CCL_ENABLE_OSHMPI_PINNED_STAGING
 
 } // namespace oshmpi_device
 } // namespace ccl

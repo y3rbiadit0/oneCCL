@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "oneapi/ccl/types.hpp"
+#include "common/oshmpi/oshmpi_device.hpp"
 
 namespace ccl {
 
@@ -37,25 +38,48 @@ public:
     void release() noexcept;
 
     void barrier();
-    void allgather(const void* send_buf, void* recv_buf, std::size_t bytes);
+
+    /* Every operand-carrying entry point takes the caller's device accessor. The
+     * runtime owns host symmetric memory and knows nothing about devices on its
+     * own; the accessor is how a device operand gets classified and copied, and a
+     * default constructed one makes every buffer host memory. */
+    void allgather(const void* send_buf,
+                   void* recv_buf,
+                   std::size_t bytes,
+                   const oshmpi_device::accessor& device);
     void allgather(const void* send_buf,
                    const ccl::vector_class<void*>& recv_bufs,
-                   std::size_t bytes);
+                   std::size_t bytes,
+                   const oshmpi_device::accessor& device);
     void allreduce(const void* send_buf,
                    void* recv_buf,
                    std::size_t count,
                    ccl::datatype dtype,
-                   ccl::reduction reduction);
-    void alltoall(const void* send_buf, void* recv_buf, std::size_t bytes_per_peer);
-    void broadcast(const void* send_buf, void* recv_buf, std::size_t bytes, int root);
+                   ccl::reduction reduction,
+                   const oshmpi_device::accessor& device);
+    void alltoall(const void* send_buf,
+                  void* recv_buf,
+                  std::size_t bytes_per_peer,
+                  const oshmpi_device::accessor& device);
+    void broadcast(const void* send_buf,
+                   void* recv_buf,
+                   std::size_t bytes,
+                   int root,
+                   const oshmpi_device::accessor& device);
 
     /* Two-sided point to point over one-sided RMA. Both calls block until the
      * transfer is complete, which is what lets the protocol stay stop-and-wait:
      * with blocking semantics a PE has at most one transfer in flight per peer,
      * so a sequence number per peer pair is enough to match chunks without tags.
      * oneCCL pt2pt carries no tag, so matching is by peer and program order. */
-    void send(const void* send_buf, std::size_t bytes, int peer);
-    void recv(void* recv_buf, std::size_t bytes, int peer);
+    void send(const void* send_buf,
+              std::size_t bytes,
+              int peer,
+              const oshmpi_device::accessor& device);
+    void recv(void* recv_buf,
+              std::size_t bytes,
+              int peer,
+              const oshmpi_device::accessor& device);
 
     int rank() const noexcept {
         return world_rank;

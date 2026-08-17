@@ -15,20 +15,26 @@
 */
 
 /*
- * Exercises the parts of the OSHMPI backend that only exist under SYCL, none of
- * which the host or device collectives tests touch:
+ * Device-side coverage for the OSHMPI backend. Everything here goes through the
+ * SYCL entry points, which is how oneCCL is actually driven on device; there is
+ * no CUDA-specific counterpart.
+ *
+ * What this pins down that the host test cannot:
  *
  *   - a device communicator built from a SYCL device and context, rather than
  *     the host create_communicator(size, rank, kvs) overload
  *   - a ccl::stream wrapping a sycl::queue, which the backend has to drain
  *     before staging: buffers are filled by a kernel here, not by memcpy, so a
  *     missing drain shows up as wrong data rather than as a crash
+ *   - staging device operands through the host symmetric arena, including the
+ *     mixed case where only one side of a collective is device memory
  *   - group_start/group_end around collectives
- *   - send/recv, implemented over shmem_putmem_signal
+ *   - send/recv, built on shmem_putmem + shmem_quiet + shmem_uint64_wait_until
+ *     (the OpenSHMEM 1.5 signalling API is a stub in the pinned OSHMPI), against
+ *     every peer rather than a single pair
  *
- * Buffers are SYCL USM device allocations, matching how comm-playground drives
- * oneCCL. Values and counts mirror oshmpi_collectives_test so a failure here
- * that the host test does not reproduce points at the SYCL path specifically.
+ * Values and counts mirror oshmpi_collectives_test so a failure here that the
+ * host test does not reproduce points at the device path specifically.
  */
 
 #include <mpi.h>
@@ -188,30 +194,84 @@ int main(int argc, char** argv) {
             sycl::free(buffer, queue);
         }
 
-        // send/recv ping-pong between rank 0 and rank 1
-        if (size >= 2 && (rank == 0 || rank == 1)) {
-            const int peer = (rank == 0) ? 1 : 0;
-            int* send = sycl::malloc_device<int>(count, queue);
-            int* recv = sycl::malloc_device<int>(count, queue);
-            fill_on_device(queue, send, count, rank + 100);
-            fill_on_device(queue, recv, count, -1);
-
-            if (rank == 0) {
-                ccl::send(send, count, ccl::datatype::int32, peer, comm, stream).wait();
-                ccl::recv(recv, count, ccl::datatype::int32, peer, comm, stream).wait();
+        // alltoall: PE r sends r * 1000 + destination to each destination.
+        // The send buffer is filled by an unwaited memcpy on the stream, so the
+        // backend still has to drain before it stages.
+        {
+            int* send = sycl::malloc_device<int>(total, queue);
+            int* recv = sycl::malloc_device<int>(total, queue);
+            std::vector<int> host_send(total, 0);
+            for (int destination = 0; destination < size; ++destination) {
+                for (std::size_t index = 0; index < count; ++index) {
+                    host_send[static_cast<std::size_t>(destination) * count + index] =
+                        rank * 1000 + destination;
+                }
             }
-            else {
-                ccl::recv(recv, count, ccl::datatype::int32, peer, comm, stream).wait();
-                ccl::send(send, count, ccl::datatype::int32, peer, comm, stream).wait();
-            }
+            queue.memcpy(send, host_send.data(), total * sizeof(int));
 
-            std::vector<int> host(count, 0);
-            queue.memcpy(host.data(), recv, count * sizeof(int)).wait();
-            for (const int value : host) {
-                expect(value == peer + 100, rank, "sycl send/recv result mismatch");
+            ccl::alltoall(send, recv, count, ccl::datatype::int32, comm, stream).wait();
+
+            std::vector<int> host(total, -1);
+            queue.memcpy(host.data(), recv, total * sizeof(int)).wait();
+            for (int source = 0; source < size; ++source) {
+                expect(host[static_cast<std::size_t>(source) * count] == source * 1000 + rank,
+                       rank,
+                       "sycl alltoall result mismatch");
             }
             sycl::free(send, queue);
             sycl::free(recv, queue);
+        }
+
+        // Mixed operands: device send buffer, host receive buffer. The backend
+        // classifies each buffer on its own rather than assuming both sides match,
+        // so this is a distinct path from the all-device collectives above.
+        {
+            int* send = sycl::malloc_device<int>(count, queue);
+            std::vector<int> host_recv(total, -1);
+            fill_on_device(queue, send, count, rank + 1);
+
+            ccl::allgather(send, host_recv.data(), count, ccl::datatype::int32, comm, stream)
+                .wait();
+
+            for (int peer = 0; peer < size; ++peer) {
+                expect(host_recv[static_cast<std::size_t>(peer) * count] == peer + 1,
+                       rank,
+                       "sycl mixed device-send host-recv allgather mismatch");
+            }
+            sycl::free(send, queue);
+        }
+
+        /* send/recv against every peer rather than one pair. The backend keeps a
+         * landing slot per sender, so a mis-indexed slot cannot show up while only
+         * ranks 0 and 1 talk. Each message carries sender and destination, which
+         * turns cross-talk between slots into a value mismatch rather than a hang.
+         *
+         * One sender per round, with every other rank posting its matching recv:
+         * send() blocks until the peer acknowledges, so a symmetric ring where
+         * everyone sends first would deadlock. */
+        for (int root = 0; root < size; ++root) {
+            int* buffer = sycl::malloc_device<int>(count, queue);
+
+            if (rank == root) {
+                for (int peer = 0; peer < size; ++peer) {
+                    if (peer == root) {
+                        continue;
+                    }
+                    fill_on_device(queue, buffer, count, root * 1000 + peer);
+                    ccl::send(buffer, count, ccl::datatype::int32, peer, comm, stream).wait();
+                }
+            }
+            else {
+                fill_on_device(queue, buffer, count, -1);
+                ccl::recv(buffer, count, ccl::datatype::int32, root, comm, stream).wait();
+
+                std::vector<int> host(count, 0);
+                queue.memcpy(host.data(), buffer, count * sizeof(int)).wait();
+                for (const int value : host) {
+                    expect(value == root * 1000 + rank, rank, "sycl send/recv result mismatch");
+                }
+            }
+            sycl::free(buffer, queue);
         }
     }
     catch (const std::exception& error) {
