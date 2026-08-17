@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
         return fail("patched OSHMPI ownership feature is unavailable", -1);
     }
     if (argc != 2) {
-        return fail("usage: oshmpi_mpi_ownership_smoke <external|owned>", -1);
+        return fail("usage: ownership_smoke <external|owned>", -1);
     }
     if (std::strcmp(argv[1], "external") == 0) {
         return run_external_mpi(argc, argv);

@@ -38,15 +38,12 @@ location accessor::classify(const void* buffer) const noexcept {
         return location::host;
     }
 
-    /* get_pointer_type reports `unknown` for allocations it does not own, but a
-     * foreign context can still make the runtime throw. Any failure means "not
-     * device memory as far as this context is concerned", which is the safe
-     * answer: it routes the buffer down the host path. */
+    // A foreign context can make the runtime throw. Any failure means "not device
+    // memory", which is the safe answer: it routes the buffer down the host path.
     try {
         switch (sycl::get_pointer_type(buffer, *sycl_context)) {
-            /* Shared USM is reachable from the host, so a plain memcpy would also
-             * be correct - but it is device-resident often enough that letting the
-             * runtime move it is the better default. */
+            // Shared USM is host-reachable, but device-resident often enough
+            // that letting the runtime move it is the better default.
             case sycl::usm::alloc::device:
             case sycl::usm::alloc::shared: return location::device;
             case sycl::usm::alloc::host: return location::host;
@@ -89,9 +86,6 @@ void accessor::synchronize() const {
 }
 
 #else // CCL_ENABLE_SYCL
-
-/* Without SYCL there is no way to recognise or reach device memory, so every
- * buffer is host memory and the copy helpers are unreachable by construction. */
 
 bool accessor::enabled() const noexcept {
     return false;
@@ -150,8 +144,6 @@ void unregister_host_memory(void* buffer) noexcept {
 }
 
 #else // CCL_ENABLE_OSHMPI_PINNED_STAGING
-
-/* Not an error: the arena works unregistered, and this is the default build. */
 
 bool try_register_host_memory(void*, std::size_t) noexcept {
     return false;

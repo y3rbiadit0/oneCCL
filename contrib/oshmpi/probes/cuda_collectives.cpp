@@ -35,7 +35,7 @@
  * One collective per process run, because OSHMPI aborts the job on error and a
  * crash in one would otherwise mask the rest.
  *
- * usage: oshmpi_cuda_collectives_probe <space|raw> <barrier|fcollect|alltoall|broadcast|reduce>
+ * usage: cuda_collectives <space|raw> <barrier|fcollect|alltoall|broadcast|reduce>
  */
 
 #include <mpi.h>

@@ -19,7 +19,7 @@ _oneccl_oshmpi_load_leonardo_env() {
 
     source "$environment" sycl
 
-    # Default to the prefix build_oshmpi_leonardo.sh installs into. The checks
+    # Default to the prefix leonardo/build_oshmpi.sh installs into. The checks
     # below still reject anything that is not a patched OSHMPI, so overriding
     # this to a different build stays safe.
     export OSHMPI_HOME=${OSHMPI_HOME:-$HOME/opt/oshmpi-ee5cf110-oneccl}

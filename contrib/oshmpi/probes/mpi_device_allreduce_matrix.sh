@@ -16,7 +16,7 @@ set -euo pipefail
 #   all FAIL                  -> device allreduce is not available here; oneCCL
 #                                must stage allreduce through host memory.
 #
-# usage: ONECCL_SOURCE_DIR=... ./submit_device_allreduce_matrix.sh
+# usage: ONECCL_SOURCE_DIR=... ./mpi_device_allreduce_matrix.sh
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 : "${ONECCL_SOURCE_DIR:?set ONECCL_SOURCE_DIR}"
@@ -27,7 +27,7 @@ submit() {
     [[ -n "$extra" ]] && exports="$exports,$extra"
     printf '%-18s %-12s ' "$label" "$mode"
     sbatch --parsable --export="$exports" \
-        "$script_dir/probe_device_allreduce.sbatch" "$mode"
+        "$script_dir/mpi_device_allreduce.sbatch" "$mode"
 }
 
 # baseline: whatever the Leonardo stack selects by default (HCOLL and UCC are

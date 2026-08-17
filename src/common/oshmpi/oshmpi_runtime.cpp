@@ -42,10 +42,9 @@ namespace {
 constexpr std::size_t default_staging_size = 64UL * 1024UL * 1024UL;
 constexpr std::size_t staging_alignment = 64;
 
-/* Slots in the symmetric scratch block used to agree on startup parameters.
- * OpenSHMEM only guarantees remote accessibility for the symmetric heap and the
- * executable's data segment - a shared library's statics are not symmetric, so
- * these reduction operands must come from shmem_malloc. */
+/* Startup-agreement reduction operands. They must come from shmem_malloc:
+ * OpenSHMEM guarantees remote accessibility only for the symmetric heap and the
+ * executable's data segment, not for a shared library's statics. */
 enum scratch_slot {
     scratch_preflight_source,
     scratch_preflight_result,
@@ -102,10 +101,9 @@ std::size_t parse_staging_size() {
     return static_cast<std::size_t>(parsed * multiplier);
 }
 
-/* Staging copies. The arena is host symmetric memory, so a device operand needs a
- * queue copy rather than memcpy. The caller classifies each buffer once and passes
- * the answer down: classification is far too expensive to repeat per chunk, and a
- * collective's operand cannot change location mid-loop. */
+/* The arena is host symmetric memory, so a device operand needs a queue copy. Each
+ * buffer is classified once by the caller and the answer passed down: it is far too
+ * expensive to repeat per chunk, and an operand cannot change location mid-loop. */
 void stage_in(const oshmpi_device::accessor& device,
               void* stage,
               const void* source,
@@ -132,9 +130,8 @@ void stage_out(const oshmpi_device::accessor& device,
     }
 }
 
-/* The caller's stream is drained by oshmpi_comm before the collective starts, but
- * a device operand may also carry work queued elsewhere on the same context.
- * Synchronize once per collective when a device operand is involved. */
+// oshmpi_comm drains the caller's stream, but a device operand may carry work
+// queued elsewhere on the same context.
 void synchronize_if_device(const oshmpi_device::accessor& device, bool any_device) {
     if (any_device) {
         device.synchronize();
@@ -143,9 +140,8 @@ void synchronize_if_device(const oshmpi_device::accessor& device, bool any_devic
 
 constexpr std::size_t default_pt2pt_slot_size = 1024UL * 1024UL;
 
-/* Bounded because the landing area is world_size * slot_size of symmetric
- * memory: it grows linearly with the job. 0 disables point to point entirely,
- * which keeps the memory back for jobs that only use collectives. */
+// The landing area is world_size * slot_size, so it grows linearly with the job.
+// 0 disables point to point and keeps that memory back.
 std::size_t parse_pt2pt_slot_size() {
     const char* value = std::getenv("CCL_OSHMPI_PT2PT_SLOT_SIZE");
     if (!value || !*value) {
@@ -189,14 +185,10 @@ void oshmpi_runtime::acquire(std::size_t size, std::size_t rank) {
     int provided = SHMEM_THREAD_SINGLE;
     const int status = shmem_init_thread(SHMEM_THREAD_SERIALIZED, &provided);
 
-    /* OSHMPI returns SHMEM_OTHER_ERR purely when it granted less than requested,
-     * having degraded to whatever level MPI reports; MPI errors abort inside
-     * OSHMPI instead. A lower level is not fatal here: every runtime call is
-     * serialized under operation_mutex and collectives run synchronously on the
-     * caller's thread, so SHMEM_THREAD_SINGLE is enough for a single-threaded
-     * application. Applications that call oneCCL from several threads must
-     * initialize MPI with at least MPI_THREAD_SERIALIZED themselves - requiring
-     * it unconditionally would lock out every caller that uses plain MPI_Init. */
+    /* A lower level than requested is not fatal: every runtime call is serialized
+     * under operation_mutex and collectives run on the caller's thread. Requiring
+     * SERIALIZED unconditionally would lock out every caller using plain MPI_Init;
+     * multi-threaded callers must initialize MPI accordingly themselves. */
     CCL_THROW_IF_NOT(provided >= SHMEM_THREAD_SINGLE,
                      "shmem_init_thread failed with status ",
                      status,
@@ -266,10 +258,7 @@ void oshmpi_runtime::acquire(std::size_t size, std::size_t rank) {
         CCL_THROW_IF_NOT(staging,
                          "shmem_malloc failed for OSHMPI staging; increase SHMEM_SYMMETRIC_SIZE");
 
-        /* Optional, and a no-op unless the build opted into it. Every staged
-         * collective copies the caller's device buffer through this arena and
-         * back; page-locking it lets those copies skip the driver's bounce buffer,
-         * measured at ~45% of peak bandwidth on Leonardo. */
+        // No-op unless the build opted in; see oshmpi_device.hpp.
         staging_pinned = oshmpi_device::try_register_host_memory(staging, staging_bytes);
 
         /* Point-to-point landing area. Every allocation here is collective, so it

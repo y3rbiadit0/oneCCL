@@ -7,7 +7,7 @@ readonly OSHMPI_PINNED_SHORT=ee5cf110
 readonly OSHMPI_PATCH_REVISION=2
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_root=$(cd -- "$script_dir/../.." && pwd)
+project_root=$(cd -- "$script_dir/../../.." && pwd)
 playground_root=${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}
 # OSHMPI must resolve the same MPI that oneCCL links. The sycl stack supplies
 # both the DPC++ compiler oneCCL needs and the OpenMPI that OSHMPI links against.
@@ -17,7 +17,7 @@ base_source=${OSHMPI_BASE_SOURCE_DIR:-$HOME/opt-src/oshmpi-main}
 source_dir=${OSHMPI_SOURCE_DIR:-$SCRATCH/oshmpi-$OSHMPI_PINNED_SHORT-oneccl-patch$OSHMPI_PATCH_REVISION-src}
 build_dir=${OSHMPI_BUILD_DIR:-$SCRATCH/oshmpi-$OSHMPI_PINNED_SHORT-oneccl-patch$OSHMPI_PATCH_REVISION-build}
 install_prefix=${OSHMPI_INSTALL_PREFIX:-$HOME/opt/oshmpi-$OSHMPI_PINNED_SHORT-oneccl}
-patch_file="$project_root/examples/oshmpi/patches/0001-preserve-external-mpi-ownership.patch"
+patch_file="$project_root/contrib/oshmpi/patches/0001-preserve-external-mpi-ownership.patch"
 
 # The patch is what makes OSHMPI leave an externally initialized MPI alone and
 # stop MPI_T_init_thread from lowering HPC-X to MPI_THREAD_SINGLE. It is only
@@ -125,8 +125,8 @@ mkdir -p "$smoke_dir"
 "$install_prefix/bin/oshc++" \
     -std=c++11 \
     -L"$CUDA_ROOT/lib64/stubs" \
-    "$project_root/examples/oshmpi/oshmpi_mpi_ownership_smoke.cpp" \
-    -o "$smoke_dir/oshmpi_mpi_ownership_smoke"
+    "$project_root/contrib/oshmpi/patches/ownership_smoke.cpp" \
+    -o "$smoke_dir/ownership_smoke"
 
 grep -q '^#define OSHMPI_PRESERVE_EXTERNAL_MPI 1$' "$install_prefix/include/shmem.h"
 
@@ -157,6 +157,6 @@ else
 fi
 
 printf 'patched OSHMPI installed at %s\n' "$install_prefix"
-printf 'ownership smoke test: %s\n' "$smoke_dir/oshmpi_mpi_ownership_smoke"
+printf 'ownership smoke test: %s\n' "$smoke_dir/ownership_smoke"
 printf 'export OSHMPI_HOME=%q\n' "$install_prefix"
 printf 'export OSHMPI_INSTALL_PREFIX=%q\n' "$install_prefix"

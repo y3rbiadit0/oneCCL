@@ -2,8 +2,8 @@
 set -euo pipefail
 
 oneccl_script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-oneccl_source_dir=$(cd -- "$oneccl_script_dir/../.." && pwd)
-source "$oneccl_script_dir/leonardo_env.sh" \
+oneccl_source_dir=$(cd -- "$oneccl_script_dir/../../.." && pwd)
+source "$oneccl_script_dir/env.sh" \
     "${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}"
 
 # oneCCL is built with DPC++ so callers can hand it SYCL queues and device
@@ -11,9 +11,9 @@ source "$oneccl_script_dir/leonardo_env.sh" \
 # libmpi. Device support comes from SYCL itself; ONECCL_OSHMPI_PINNED_STAGING only
 # turns on the optional CUDA pinning of the staging arena, which is worth ~45% of
 # peak bandwidth on this machine but is not required.
-oneccl_c_compiler=${ONECCL_C_COMPILER:-${DPCPP_CLANG:?leonardo_env.sh must define DPCPP_CLANG}}
-oneccl_cxx_compiler=${ONECCL_CXX_COMPILER:-${DPCPP_CLANGXX:?leonardo_env.sh must define DPCPP_CLANGXX}}
-oneccl_sycl_flags=${ONECCL_SYCL_FLAGS:-${SYCL_FLAGS:?leonardo_env.sh must define SYCL_FLAGS}}
+oneccl_c_compiler=${ONECCL_C_COMPILER:-${DPCPP_CLANG:?leonardo/env.sh must define DPCPP_CLANG}}
+oneccl_cxx_compiler=${ONECCL_CXX_COMPILER:-${DPCPP_CLANGXX:?leonardo/env.sh must define DPCPP_CLANGXX}}
+oneccl_sycl_flags=${ONECCL_SYCL_FLAGS:-${SYCL_FLAGS:?leonardo/env.sh must define SYCL_FLAGS}}
 oneccl_build_dir=${ONECCL_BUILD_DIR:-$SCRATCH/oneccl-oshmpi}
 oneccl_install_prefix=${ONECCL_INSTALL_PREFIX:-$HOME/opt/oneccl-oshmpi}
 oneccl_cache="$oneccl_build_dir/CMakeCache.txt"

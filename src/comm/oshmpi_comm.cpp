@@ -23,9 +23,7 @@
 #include "common/datatype/datatype.hpp"
 #include "common/oshmpi/oshmpi_device.hpp"
 #include "common/oshmpi/oshmpi_runtime.hpp"
-// ccl::stream::impl_value_t is a shared_ptr to ccl_stream, which the public
-// headers only forward declare. wait_stream() calls through it, so the full
-// definition is required here.
+// The public headers only forward declare ccl_stream; wait_stream() calls through it.
 #include "common/stream/stream.hpp"
 #include "oshmpi_kvs_impl.hpp"
 
@@ -38,11 +36,9 @@ void wait_dependencies(const ccl::vector_class<ccl::event>& deps) {
     }
 }
 
-/* The collectives are blocking and stage through host memory, so anything the
- * caller queued on its own stream is not otherwise ordered against them. Draining
- * the queue first is what makes a device operand safe to read. This is a
- * correctness requirement, not a tuning choice: without it the backend can stage a
- * buffer the caller's kernel has not finished writing. */
+// Correctness, not tuning: the collectives are blocking and stage through host
+// memory, so without draining first the backend can read a buffer the caller's
+// kernel has not finished writing.
 void wait_stream(const ccl::stream::impl_value_t& stream) {
 #ifdef CCL_ENABLE_SYCL
     if (stream && stream->is_sycl_device_stream()) {
@@ -53,8 +49,6 @@ void wait_stream(const ccl::stream::impl_value_t& stream) {
 #endif // CCL_ENABLE_SYCL
 }
 
-/* Every collective begins the same way: settle the caller's dependencies, drain
- * its stream, then check the attributes it asked for are ones we honour. */
 template <class attr_type>
 void enter_collective(const ccl::stream::impl_value_t& stream,
                       const attr_type& attr,
@@ -80,20 +74,15 @@ void enter_collective(const ccl::stream::impl_value_t& stream,
     validate_attributes(attr);
 }
 
-/* Builds what the runtime needs in order to touch device memory. The queue comes
- * from the caller's stream and the context from that same queue, so classification
- * and copying always agree about which context owns an allocation.
- *
- * A device communicator used without a stream still yields a context, which is
- * deliberate: the runtime can then recognise a device operand and report it as an
- * error instead of memcpy'ing device memory on the host. A host communicator
- * yields the default accessor, under which every buffer is host memory. */
+/* The context is taken from the caller's queue so classification and copying agree
+ * on ownership. A device communicator without a stream still yields a context, so a
+ * device operand is reported as an error rather than memcpy'd on the host. */
 oshmpi_device::accessor make_accessor(const ccl::stream::impl_value_t& stream,
                                       const std::shared_ptr<ccl::context>& context) {
 #ifdef CCL_ENABLE_SYCL
     if (stream && stream->is_sycl_device_stream()) {
-        // get_native_stream() returns by value; sycl::queue is a reference-counted
-        // handle, so the copy still refers to the caller's queue.
+        // Returns by value; sycl::queue is a handle, so this still refers to the
+        // caller's queue.
         sycl::queue queue = stream->get_native_stream();
         return oshmpi_device::accessor(queue.get_context(), queue);
     }

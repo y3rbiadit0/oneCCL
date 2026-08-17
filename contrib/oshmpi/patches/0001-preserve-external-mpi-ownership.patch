@@ -27,7 +27,7 @@ worktree before being committed. This is a reconstruction against the pinned
 commit, written from the recovered generated header and the documented
 behaviour. It is functionally equivalent but not byte-identical to the patch
 that produced the validated 2026-08-15 build, so it must be re-validated with
-examples/oshmpi/oshmpi_mpi_ownership_smoke.cpp rather than assumed good.
+contrib/oshmpi/patches/ownership_smoke.cpp rather than assumed good.
 
 diff --git a/include/shmem.h.in.tpl b/include/shmem.h.in.tpl
 index 09e8a81..e785346 100644

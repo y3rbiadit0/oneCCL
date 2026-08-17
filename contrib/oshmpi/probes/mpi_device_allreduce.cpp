@@ -36,7 +36,7 @@
  *   the collective component - selected by the caller through OMPI_MCA_* in the
  *       environment, so this program does not need to know about it.
  *
- * usage: mpi_device_allreduce_probe <blocking|nonblocking>
+ * usage: mpi_device_allreduce <blocking|nonblocking>
  */
 
 #include <mpi.h>

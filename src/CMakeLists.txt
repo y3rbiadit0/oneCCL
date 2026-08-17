@@ -406,10 +406,7 @@ endif()
 if (CCL_ENABLE_OSHMPI)
     list(APPEND SRC_LINK_LIBS OSHMPI::oshmpi)
     if (CCL_ENABLE_OSHMPI_PINNED_STAGING)
-        # Only arena pinning calls into the CUDA runtime - classification and
-        # staging copies go through SYCL. OSHMPI::oshmpi carries libcudart merely
-        # as a transitive dependency of its own CUDA build, which is not something
-        # to rely on, so link it explicitly.
+        # Only arena pinning uses CUDA; classification and copies go through SYCL.
         list(APPEND SRC_INCLUDE_DIRS ${OSHMPI_CUDA_INCLUDE_DIR})
         list(APPEND SRC_LINK_LIBS ${OSHMPI_CUDART_LIBRARY})
     endif()

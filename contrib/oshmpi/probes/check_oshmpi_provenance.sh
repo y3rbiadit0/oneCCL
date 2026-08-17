@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_root=$(cd -- "$script_dir/../.." && pwd)
+project_root=$(cd -- "$script_dir/../../.." && pwd)
 playground_root=${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}
 source "$playground_root/cluster/leonardo/environment.sh" sycl
 
@@ -48,4 +48,4 @@ else
 fi
 
 printf 'ownership_patch=%s\n' \
-    "$project_root/examples/oshmpi/patches/0001-preserve-external-mpi-ownership.patch"
+    "$project_root/contrib/oshmpi/patches/0001-preserve-external-mpi-ownership.patch"

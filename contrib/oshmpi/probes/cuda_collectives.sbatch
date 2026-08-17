@@ -21,7 +21,7 @@ set -uo pipefail
 oneccl_source_dir=${ONECCL_SOURCE_DIR:?set ONECCL_SOURCE_DIR}
 playground_root=${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}
 
-source "$oneccl_source_dir/examples/oshmpi/leonardo_env.sh" "$playground_root"
+source "$oneccl_source_dir/contrib/oshmpi/leonardo/env.sh" "$playground_root"
 export COMM_PLAYGROUND_JOB_NODES=${SLURM_NNODES:-1}
 source "$playground_root/cluster/leonardo/runtime/oshmpi.sh"
 
@@ -44,8 +44,8 @@ export LD_LIBRARY_PATH="$OSHMPI_HOME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 cuda_root=${CUDA_ROOT:-${CUDA_HOME:-}}
 : "${cuda_root:?CUDA_ROOT is not set by the Leonardo environment}"
 
-probe_src="$oneccl_source_dir/examples/oshmpi/oshmpi_cuda_collectives_probe.cpp"
-probe_bin=${SCRATCH:-/tmp}/oshmpi_cuda_collectives_probe
+probe_src="$oneccl_source_dir/contrib/oshmpi/probes/cuda_collectives.cpp"
+probe_bin=${SCRATCH:-/tmp}/cuda_collectives
 
 "$OSHMPI_HOME/bin/oshc++" -std=c++11 \
     -I"$cuda_root/include" \
@@ -78,7 +78,7 @@ run_probe() {
 # PROBE_ONLY runs an explicit list of "<memory>:<collective>" pairs instead of the
 # default sweep, so a single case can be re-checked without an ad-hoc srun that
 # would miss this script's environment setup.
-#   PROBE_ONLY="raw:reduce" sbatch examples/oshmpi/probe_cuda_collectives.sbatch
+#   PROBE_ONLY="raw:reduce" sbatch contrib/oshmpi/probes/cuda_collectives.sbatch
 if [[ -n ${PROBE_ONLY:-} ]]; then
     for pair in $PROBE_ONLY; do
         run_probe "${pair%%:*}" "${pair##*:}"

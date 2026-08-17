@@ -12,13 +12,13 @@
 
 # Runs ONE (collective component, blocking mode) combination, because the known
 # failure is a segfault that takes down the whole allocation. Submit the matrix
-# with submit_device_allreduce_matrix.sh so one crash cannot hide the rest.
+# with mpi_device_allreduce_matrix.sh so one crash cannot hide the rest.
 #
-# usage: sbatch [--export=ALL,PROBE_LABEL=...] probe_device_allreduce.sbatch <blocking|nonblocking>
+# usage: sbatch [--export=ALL,PROBE_LABEL=...] mpi_device_allreduce.sbatch <blocking|nonblocking>
 
 set -uo pipefail
 
-mode=${1:?usage: sbatch probe_device_allreduce.sbatch <blocking|nonblocking>}
+mode=${1:?usage: sbatch mpi_device_allreduce.sbatch <blocking|nonblocking>}
 label=${PROBE_LABEL:-unlabelled}
 
 oneccl_source_dir=${ONECCL_SOURCE_DIR:?set ONECCL_SOURCE_DIR}
@@ -28,8 +28,8 @@ source "$playground_root/cluster/leonardo/environment.sh" sycl
 cuda_root=${CUDA_ROOT:-${CUDA_HOME:-}}
 : "${cuda_root:?CUDA_ROOT is not set by the Leonardo environment}"
 
-probe_src="$oneccl_source_dir/examples/oshmpi/mpi_device_allreduce_probe.cpp"
-probe_bin=${SCRATCH:-/tmp}/mpi_device_allreduce_probe
+probe_src="$oneccl_source_dir/contrib/oshmpi/probes/mpi_device_allreduce.cpp"
+probe_bin=${SCRATCH:-/tmp}/mpi_device_allreduce
 
 mpicxx -std=c++11 -I"$cuda_root/include" \
     "$probe_src" -o "$probe_bin" \

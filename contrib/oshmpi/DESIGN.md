@@ -30,7 +30,7 @@ host-staged fallback. Preserve SYCL dependency and stream ordering.
 
 #### Device-memory gate results (2026-08-16, HPC-X 2.19 + CUDA 12.4)
 
-Measured with `examples/oshmpi/probe_cuda_collectives.sbatch`, 2 PEs on one node.
+Measured with `contrib/oshmpi/probes/cuda_collectives.sbatch`, 2 PEs on one node.
 `space` is CUDA symmetric memory from `shmemx_space_create(SHMEMX_MEM_CUDA)`;
 `raw` is plain `cudaMalloc`, deliberately not symmetric.
 
@@ -156,7 +156,7 @@ staging path is byte-for-byte what it was before device support existed.
 C++ note: `shmemx.h` has no `extern "C"` guard of its own and the `<shmem.h>` it
 includes closes its guard first, so the space API is name-mangled and fails to
 link from C++. Any oneCCL use of the space API needs the include wrapped, as in
-`examples/oshmpi/oshmpi_cuda_collectives_probe.cpp`.
+`contrib/oshmpi/probes/cuda_collectives.cpp`.
 
 ## Architecture
 
@@ -308,7 +308,7 @@ step with the command and expected evidence.
   one-error-at-a-time repair loop.
 - 2026-08-15: OSHMPI's MPI dependency is discovered with `find_package(MPI)` and
   exposed through `MPI::MPI_C` on the `OSHMPI::oshmpi` imported target, instead of
-  borrowing oneCCL's Intel-MPI-oriented `MPI_INCLUDE_DIR`. `build_leonardo.sh` no
+  borrowing oneCCL's Intel-MPI-oriented `MPI_INCLUDE_DIR`. `leonardo/build_oneccl.sh` no
   longer passes `MPI_DIR`, so oneCCL's own MPI paths are never repointed at HPC-X.
 - 2026-08-15: the startup agreement reductions used file-scope statics in
   `libccl.so` as `shmem_*_reduce` operands. OpenSHMEM guarantees symmetry only for
@@ -343,16 +343,16 @@ step with the command and expected evidence.
   builds with `CMAKE_SKIP_RPATH` and this focused artifact does not go through the
   installed `vars.sh`.
 - 2026-08-16: the validation job had been running with a 64M staging arena, so no
-  collective ever chunked. `leonardo_env.sh` exports `CCL_OSHMPI_STAGING_SIZE=64M`
+  collective ever chunked. `leonardo/env.sh` exports `CCL_OSHMPI_STAGING_SIZE=64M`
   and is sourced first, so the sbatch's `${VAR:-128}` default could never apply.
   The job now overrides the arena through `ONECCL_VALIDATE_STAGING_SIZE`.
   Re-running with a real 128-byte arena gave: 2 ranks/1 node, 2 ranks/2 nodes,
   4 ranks/1 node, and 8 ranks/2 nodes, all PASS at 32, 32, 16 and 8 byte chunks
   respectively, with the test's `MPI_Finalized` assertion holding in every case.
-- 2026-08-15: `examples/oshmpi/patches/0001-preserve-external-mpi-ownership.patch`
+- 2026-08-15: `contrib/oshmpi/patches/0001-preserve-external-mpi-ownership.patch`
   was found to be referenced by the dependency build and required by
   `FindOSHMPI.cmake`, but never committed, so the stack was not reproducible from a
-  clean clone. `build_oshmpi_leonardo.sh` now fails early with regeneration
+  clean clone. `leonardo/build_oshmpi.sh` now fails early with regeneration
   instructions; the patch itself still has to be recovered from Leonardo.
 - 2026-08-16: the original patch was lost. Both scratch worktrees had been removed,
   and neither `opt-src/oshmpi-main` nor `opt-src/oshmpi` carried the change; there
@@ -368,6 +368,6 @@ step with the command and expected evidence.
   initialization after MPI's own so it requests the granted level. `initialize_mpit()`
   runs later in the same function, so the reordering is safe. The patch is verified
   to apply cleanly to a pristine tree and to satisfy the markers that
-  `build_oshmpi_leonardo.sh` and `FindOSHMPI.cmake` check, but it is functionally
+  `leonardo/build_oshmpi.sh` and `FindOSHMPI.cmake` check, but it is functionally
   equivalent rather than byte-identical to the lost original, so Gate 1 must be
   re-run against a separate install prefix before it is trusted.

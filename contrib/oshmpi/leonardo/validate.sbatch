@@ -18,7 +18,7 @@ playground_root=${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}
 test_binary="$oneccl_build_dir/tests/oshmpi/oshmpi_collectives_test"
 
 mkdir -p ./logs
-source "$oneccl_source_dir/examples/oshmpi/leonardo_env.sh" "$playground_root"
+source "$oneccl_source_dir/contrib/oshmpi/leonardo/env.sh" "$playground_root"
 export COMM_PLAYGROUND_JOB_NODES=${SLURM_NNODES:-1}
 source "$playground_root/cluster/leonardo/runtime/oshmpi.sh"
 
@@ -32,7 +32,7 @@ fi
 export CCL_BACKEND=oshmpi
 export CCL_LOG_LEVEL=${CCL_LOG_LEVEL:-info}
 
-# leonardo_env.sh, sourced above, already exports a production-sized arena
+# leonardo/env.sh, sourced above, already exports a production-sized arena
 # (CCL_OSHMPI_STAGING_SIZE=64M) and SHMEM_SYMMETRIC_SIZE=1G. A ${VAR:-...}
 # default here would therefore never apply. Override the arena deliberately:
 # the point of this job is to force every collective through the chunking path,

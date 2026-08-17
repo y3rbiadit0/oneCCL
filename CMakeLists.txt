@@ -156,28 +156,20 @@ message(STATUS "MPI_INCLUDE_DIR: ${MPI_INCLUDE_DIR}")
 message(STATUS "MPI_LIB_DIR: ${MPI_LIB_DIR}")
 
 if (CCL_ENABLE_OSHMPI)
-    # Device support comes from SYCL: pointers are classified with
-    # sycl::get_pointer_type and staged with queue copies, so the backend works on
-    # any target the SYCL implementation supports. Without SYCL the backend is
-    # host-only, which is a valid configuration rather than an error.
     if (NOT CCL_ENABLE_SYCL)
         message(STATUS
                 "OSHMPI backend is host-only: device buffers need CCL_ENABLE_SYCL=ON")
     endif()
-    # OSHMPI supplies its own MPI transport. oneCCL's native MPI ATL targets the
-    # MPICH ABI (it dlopens libmpi.so.12 and drives I_MPI_* knobs), so the two are
-    # independent: ENABLE_MPI stays free to be OFF here.
+    # OSHMPI supplies its own MPI transport, and oneCCL's native MPI ATL targets the
+    # MPICH ABI, so the two are independent: ENABLE_MPI stays free to be OFF here.
     find_package(OSHMPI REQUIRED)
     add_definitions(-DCCL_ENABLE_OSHMPI)
 
     if (CCL_ENABLE_OSHMPI_PINNED_STAGING)
-        # Optional accelerator, not a dependency: page-locking the staging arena
-        # skips the driver's bounce buffer on staged copies, worth ~45% of peak
-        # bandwidth on NVIDIA hardware. There is no portable equivalent (see
-        # oshmpi_device.hpp), so this is the one place CUDA enters the backend and
-        # it is off by default. FindOSHMPI already locates libcudart because a
-        # CUDA-enabled OSHMPI links it transitively; require it explicitly here so
-        # a misconfigured CUDA root fails at configure time rather than at link.
+        # Optional accelerator, off by default and the one place CUDA enters the
+        # backend; see oshmpi_device.hpp. FindOSHMPI already locates libcudart as a
+        # transitive dependency of a CUDA-enabled OSHMPI, but require it explicitly
+        # so a misconfigured CUDA root fails at configure time rather than at link.
         if (NOT OSHMPI_CUDART_LIBRARY)
             message(FATAL_ERROR
                     "CCL_ENABLE_OSHMPI_PINNED_STAGING=ON but libcudart was not "

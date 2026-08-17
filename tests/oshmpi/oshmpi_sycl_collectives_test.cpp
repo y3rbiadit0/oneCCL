@@ -14,28 +14,14 @@
  limitations under the License.
 */
 
-/*
- * Device-side coverage for the OSHMPI backend. Everything here goes through the
- * SYCL entry points, which is how oneCCL is actually driven on device; there is
- * no CUDA-specific counterpart.
+/* Device coverage for the OSHMPI backend: device communicator, stream draining,
+ * staging of device operands (including mixed host/device), group scope and
+ * send/recv against every peer.
  *
- * What this pins down that the host test cannot:
- *
- *   - a device communicator built from a SYCL device and context, rather than
- *     the host create_communicator(size, rank, kvs) overload
- *   - a ccl::stream wrapping a sycl::queue, which the backend has to drain
- *     before staging: buffers are filled by a kernel here, not by memcpy, so a
- *     missing drain shows up as wrong data rather than as a crash
- *   - staging device operands through the host symmetric arena, including the
- *     mixed case where only one side of a collective is device memory
- *   - group_start/group_end around collectives
- *   - send/recv, built on shmem_putmem + shmem_quiet + shmem_uint64_wait_until
- *     (the OpenSHMEM 1.5 signalling API is a stub in the pinned OSHMPI), against
- *     every peer rather than a single pair
- *
- * Values and counts mirror oshmpi_collectives_test so a failure here that the
- * host test does not reproduce points at the device path specifically.
- */
+ * Buffers are filled by kernels rather than memcpy, so a missing stream drain
+ * shows up as wrong data rather than as a crash. Values and counts mirror
+ * oshmpi_collectives_test, so a failure the host test does not reproduce points
+ * at the device path specifically. */
 
 #include <mpi.h>
 
@@ -194,9 +180,7 @@ int main(int argc, char** argv) {
             sycl::free(buffer, queue);
         }
 
-        // alltoall: PE r sends r * 1000 + destination to each destination.
-        // The send buffer is filled by an unwaited memcpy on the stream, so the
-        // backend still has to drain before it stages.
+        // Send buffer filled by an unwaited memcpy: the backend must still drain.
         {
             int* send = sycl::malloc_device<int>(total, queue);
             int* recv = sycl::malloc_device<int>(total, queue);
@@ -222,9 +206,8 @@ int main(int argc, char** argv) {
             sycl::free(recv, queue);
         }
 
-        // Mixed operands: device send buffer, host receive buffer. The backend
-        // classifies each buffer on its own rather than assuming both sides match,
-        // so this is a distinct path from the all-device collectives above.
+        // Mixed operands: each buffer is classified on its own, so this is a
+        // distinct path from the all-device collectives above.
         {
             int* send = sycl::malloc_device<int>(count, queue);
             std::vector<int> host_recv(total, -1);
@@ -241,14 +224,11 @@ int main(int argc, char** argv) {
             sycl::free(send, queue);
         }
 
-        /* send/recv against every peer rather than one pair. The backend keeps a
-         * landing slot per sender, so a mis-indexed slot cannot show up while only
-         * ranks 0 and 1 talk. Each message carries sender and destination, which
-         * turns cross-talk between slots into a value mismatch rather than a hang.
-         *
-         * One sender per round, with every other rank posting its matching recv:
-         * send() blocks until the peer acknowledges, so a symmetric ring where
-         * everyone sends first would deadlock. */
+        /* The backend keeps a landing slot per sender, so a mis-indexed slot cannot
+         * show up while only ranks 0 and 1 talk. Each message carries sender and
+         * destination, turning slot cross-talk into a mismatch rather than a hang.
+         * One sender per round: send() blocks until the peer acknowledges, so a
+         * symmetric ring would deadlock. */
         for (int root = 0; root < size; ++root) {
             int* buffer = sycl::malloc_device<int>(count, queue);
 

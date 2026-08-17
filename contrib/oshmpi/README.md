@@ -1,8 +1,19 @@
 # OSHMPI Backend
 
-Phase 1 provides blocking oneCCL host collectives through OSHMPI. It supports
-barrier, allgather, allreduce, alltoall, and broadcast over
-`SHMEM_TEAM_WORLD`. User buffers are copied through bounded symmetric staging.
+Nothing in this directory is built or installed by oneCCL. It holds the OSHMPI
+patch the backend requires, the design record, and the scripts used to build and
+validate the backend on CINECA Leonardo. The backend itself lives in
+`src/common/oshmpi/` and `src/comm/oshmpi_comm.*`; its tests are in
+`tests/oshmpi/`.
+
+The backend provides blocking oneCCL collectives through OSHMPI: barrier,
+allgather, allreduce, alltoall and broadcast over `SHMEM_TEAM_WORLD`, plus
+send/recv. User buffers are copied through bounded symmetric staging.
+
+Device buffers are supported through SYCL - classified with
+`sycl::get_pointer_type` and staged with `queue.memcpy` - so the backend is not
+tied to any one vendor. Pinning the staging arena is the only CUDA-dependent
+part and is optional (`CCL_ENABLE_OSHMPI_PINNED_STAGING`, off by default).
 
 The backend requires an OSHMPI build containing
 `0001-preserve-external-mpi-ownership.patch`. This prevents
@@ -22,13 +33,13 @@ The provenance probe can be rerun with:
 
 ```bash
 export COMM_PLAYGROUND_ROOT=$HOME/Projects/hpc-comm-playground
-./examples/oshmpi/probe_leonardo_oshmpi.sh "$HOME/opt-src/oshmpi-main"
+./contrib/oshmpi/probes/check_oshmpi_provenance.sh "$HOME/opt-src/oshmpi-main"
 ```
 
 Build the pinned revision with the ownership patch:
 
 ```bash
-./examples/oshmpi/build_oshmpi_leonardo.sh
+./contrib/oshmpi/leonardo/build_oshmpi.sh
 ```
 
 This creates a clean detached worktree under `$SCRATCH`, leaves the existing
@@ -38,7 +49,7 @@ source and install untouched, and installs to
 Validate both MPI ownership paths:
 
 ```bash
-sbatch examples/oshmpi/validate_ownership_leonardo.sbatch
+sbatch contrib/oshmpi/leonardo/validate_ownership.sbatch
 ```
 
 Select the resulting install and build oneCCL:
@@ -46,15 +57,19 @@ Select the resulting install and build oneCCL:
 ```bash
 export OSHMPI_HOME=$HOME/opt/oshmpi-ee5cf110-oneccl
 export COMM_PLAYGROUND_ROOT=$HOME/Projects/hpc-comm-playground
-./examples/oshmpi/build_leonardo.sh
+./contrib/oshmpi/leonardo/build_oneccl.sh
 ```
 
-The default oneCCL build directory is `$SCRATCH/oneccl-oshmpi-gcc`. Phase 1
-builds oneCCL with `gcc`/`g++` while OSHMPI remains linked to the validated
-HPC-X/NVHPC CUDA stack. Override the host compilers with
-`ONECCL_C_COMPILER` and `ONECCL_CXX_COMPILER`. Set `ONECCL_BUILD_DIR` to use
-another directory; it must not contain a CMake cache for another source tree or
-compiler.
+The default oneCCL build directory is `$SCRATCH/oneccl-oshmpi`. oneCCL is built
+with DPC++ so callers can hand it SYCL queues and device communicators, and
+OSHMPI must come from the same environment so both resolve one `libmpi`.
+Override the compilers with `ONECCL_C_COMPILER` and `ONECCL_CXX_COMPILER`. Set
+`ONECCL_BUILD_DIR` to use another directory; it must not contain a CMake cache
+for another source tree or compiler.
+
+`ONECCL_OSHMPI_PINNED_STAGING=OFF` builds without CUDA at all, which is the
+upstream default; the Leonardo script defaults it on because it is worth ~45% of
+peak bandwidth there.
 
 This is an OSHMPI-focused oneCCL artifact: the native oneCCL MPI and stub
 backends are disabled. HPC-X MPI remains an explicit dependency of OSHMPI and
@@ -84,7 +99,7 @@ Submit the first two-rank validation:
 
 ```bash
 export ONECCL_SOURCE_DIR=$PWD
-sbatch examples/oshmpi/validate_leonardo.sbatch
+sbatch contrib/oshmpi/leonardo/validate.sbatch
 ```
 
 The same job supports topology overrides with `sbatch --nodes=...`,

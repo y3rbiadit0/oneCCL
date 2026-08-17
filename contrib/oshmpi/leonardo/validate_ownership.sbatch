@@ -14,7 +14,7 @@ set -euo pipefail
 
 playground_root=${COMM_PLAYGROUND_ROOT:-$HOME/Projects/hpc-comm-playground}
 install_prefix=${OSHMPI_INSTALL_PREFIX:-$HOME/opt/oshmpi-ee5cf110-oneccl}
-smoke_test="$install_prefix/tests/oshmpi_mpi_ownership_smoke"
+smoke_test="$install_prefix/tests/ownership_smoke"
 
 source "$playground_root/cluster/leonardo/environment.sh" sycl
 export OSHMPI_HOME="$install_prefix"
