@@ -1,8 +1,8 @@
 # OSHMPI Backend
 
 Nothing in this directory is built or installed by oneCCL. It holds the OSHMPI
-patch the backend requires, the design record, and the scripts used to build and
-validate the backend on CINECA Leonardo. The backend itself lives in
+patch the backend requires, the measurements behind the design, and the scripts
+used to build and validate the backend on CINECA Leonardo. The backend itself lives in
 `src/common/oshmpi/` and `src/comm/oshmpi_comm.*`; its tests are in
 `tests/oshmpi/`.
 
@@ -34,13 +34,6 @@ The validated dependency pins are:
 ```text
 OSHMPI ee5cf110e673c098707257bb025404e17ac0a5fc
 OpenPA 0475704dde41054db33562a8d17314fe0e30aaf3
-```
-
-The provenance probe can be rerun with:
-
-```bash
-export COMM_PLAYGROUND_ROOT=$HOME/Projects/hpc-comm-playground
-./contrib/oshmpi/probes/check_oshmpi_provenance.sh "$HOME/opt-src/oshmpi-main"
 ```
 
 Build the pinned revision with the ownership patch:
@@ -111,6 +104,59 @@ sbatch contrib/oshmpi/leonardo/validate.sbatch
 
 The same job supports topology overrides with `sbatch --nodes=...`,
 `--ntasks-per-node=...`, and `--gres=gpu:...`.
+
+## Measurements
+
+### Device pointers through OSHMPI collectives
+
+2 PEs on one node. `space` is CUDA symmetric memory from
+`shmemx_space_create(SHMEMX_MEM_CUDA)`; `raw` is plain `cudaMalloc`.
+
+| collective | space | raw  | notes                                          |
+|------------|-------|------|------------------------------------------------|
+| barrier    | PASS  | n/a  | no operands                                     |
+| allgather  | PASS  | PASS | `MPI_Allgather`, UCX moves device memory        |
+| alltoall   | PASS  | PASS | `MPI_Alltoall`, same                            |
+| broadcast  | SEGV  | SEGV | OSHMPI host `memcpy` on the root PE             |
+| allreduce  | SEGV  | SEGV | no accelerated coll component; host CPU reduces |
+
+The dividing line is moving bytes versus computing on them. OSHMPI forwards the
+caller's pointers straight to MPI with no memkind handling, so pure data movement
+inherits MPI's CUDA-awareness. The two failures have unrelated causes:
+`OSHMPI_broadcast_team()` ends with a host `memcpy` over a device pointer
+(`src/shmem/coll.c:66`, an OSHMPI defect); `allreduce` falls back to Open MPI's
+`libnbc`, which reduces on the host CPU because this stack builds with HCOLL and
+UCC disabled. Whether enabling either lifts the restriction is still open.
+
+`raw` passing shows symmetric allocation is not required by this *implementation*.
+It is still required by the OpenSHMEM specification, so relying on it would tie
+oneCCL to OSHMPI's internals. Treat it as a measurement, not a licence.
+
+### Device layer and staging cost
+
+allreduce, 2 ranks on one node, peak bandwidth in GB/s:
+
+|                     | unpinned | pinned |
+|---------------------|---------:|-------:|
+| CUDA device layer   |    2.553 |  4.101 |
+| SYCL device layer   |    2.546 |  3.694 |
+
+The move from CUDA to SYCL is free (2.546 against 2.553 unpinned). Pinning the
+staging arena is worth 45-60%, and the SYCL copy path does honour a
+`cudaHostRegister`ed pointer - the assumption that it would not was wrong, and
+cost 31% of peak until it was measured. The ~10% between the pinned figures is
+per-call accessor overhead, visible only once the copy is fast enough for fixed
+costs to matter.
+
+For scale, NCCL through oneCCL reaches 56 GB/s on the same pair of GPUs by staying
+on the device over NVLink. No host-staged design competes with that on one node;
+the comparison that matters here is multi-node, where NCCL also loses NVLink.
+
+### C++ note
+
+`shmemx.h` has no `extern "C"` guard of its own and the `<shmem.h>` it includes
+closes its guard first, so the space API is name-mangled and fails to link from
+C++. Any use of the space API needs the include wrapped.
 
 ## Runtime Variables
 
